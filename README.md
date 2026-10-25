@@ -6,7 +6,7 @@ Serviço financeiro de apostas com precisão monetária, idempotência persisten
 
 Bootstrap técnico executável: NestJS sob Bun, conexão MikroORM/PostgreSQL e `GET /health/live`. A suíte de compatibilidade usa PostgreSQL real em container e um banco descartável por execução para verificar migrations, commit, rollback, uma constraint e transporte decimal exato.
 
-Domínio financeiro, API de apostas, unidade de trabalho da aplicação, autenticação/extensão, readiness e workers ainda não estão implementados. A suíte técnica não demonstra as garantias financeiras do desafio.
+A entrada HTTP usa `NoAuthGuard` sem verificar credenciais nem criar identidade; health permanece público mesmo na substituição desse provider. `Money` está implementado e testado em memória, com aritmética exata em `bigint`. Wallet, persistência financeira, API de apostas, unidade de trabalho da aplicação, autenticação real, readiness e workers ainda não estão implementados. Os testes atuais não demonstram as garantias financeiras persistentes do desafio.
 
 O enunciado original está em [challenge.md](docs/challenge.md).
 

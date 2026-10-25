@@ -38,11 +38,19 @@ O primeiro download da imagem falhou no helper de credenciais Windows, com erro 
 
 **Limites:** não há evidência ainda de wallet/transação/ledger/inbox/outbox reais, locks, idempotência, três processos, workers, SQS ou recuperação após crash. A unidade de trabalho aprovada está documentada, mas seu contrato de aplicação ainda não foi implementado. O decimal do ensaio não decide precisão máxima ou representação de `Money`. A reversão de triggers e a imutabilidade do ledger serão testadas com o schema financeiro. O usuário PostgreSQL do ensaio tem privilégios de desenvolvimento; as constraints ainda precisam ser verificadas com o futuro papel restrito da aplicação. Liveness não verifica readiness. Logs estruturados e métricas do desafio permanecem pendentes. Não foi testado outro sistema operacional.
 
+## Extensão de autenticação HTTP
+
+`tests/integration/auth.test.ts` importa o `AppModule` real e adiciona um controller somente na fixture. Demonstra acesso sem `Authorization`, ausência de `user`, `auth` e `providerIdentity` na requisição e que header/payload com `providerId` e credenciais arbitrárias não criam essas identidades. Ao simular recusa no provider `NoAuthGuard`, a rota fixture retorna 403, enquanto `GET /health/live` continua respondendo 200 sem chamar esse provider. O teste original de bootstrap e os testes reais de PostgreSQL permanecem intactos.
+
+Validação: `bun run typecheck` e `bun run lint` sem erros; `bun run test` com 8 testes passando, 0 falhas e 27 asserções. O primeiro lint apontou decorators de parâmetros desabilitados; o parser do Biome foi ajustado para o uso do NestJS. Não há autenticação ou autorização real, validação de tokens, vínculo de `providerId` a credenciais ou integração com IdP demonstrada. A substituição é simulada no método do provider via spy; não valida um IdP futuro.
+
 ## Unidade
 
-Testar Money, Wallet, ledger balanceado, estados terminais, referências, reversões e eventos sem NestJS/banco. Cobrir escala fixa, entradas inválidas, conflito de moeda e imutabilidade.
+`tests/unit/money.test.ts` valida `Money` sem NestJS ou banco: formatos e tipos runtime, BRL/USD, aritmética exata (`0.10 + 0.20 = 0.30`), sinais e zero, conflitos em todas as operações binárias, limites inclusivos e estouros positivos/negativos, serialização sem `bigint` exposto e imutabilidade inclusive em falhas. Entradas negativas são recusadas; resultados internos assinados não podem ser reconstruídos pela factory de entrada.
 
-Precisão excedente deve ser rejeitada; evitar arredondamento silencioso. Testar canonicalização e conflito de payload; a garantia persistente de idempotência exige integração.
+**Validação:** `bun run typecheck` e `bun run lint` passaram; `bun test tests/unit/money.test.ts` teve 86 testes passando e 213 asserções. `bun run test` teve 94 testes passando, 0 falhas e 240 asserções, incluindo os 8 testes HTTP/stack existentes com PostgreSQL real. Na primeira execução, três casos com arrays vazios foram interpretados como linhas sem argumentos pelo `test.each` e expiraram; o empacotamento dos parâmetros foi corrigido, sem alterar testes existentes.
+
+**Limites:** somente `Money` em memória foi implementado. Persistência, reidratação com sinal, restrição da aplicação a BRL e regras de zero por operação permanecem pendentes. Wallet, ledger, estados terminais, referências, reversões e eventos ainda precisam de testes de domínio. Canonicalização/conflito de payload e idempotência persistente serão verificados nas etapas correspondentes.
 
 ## Integração
 

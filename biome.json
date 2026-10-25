@@ -4,6 +4,9 @@
     "includes": ["**/*.ts", "**/*.json", "!**/node_modules", "!**/.tmp"]
   },
   "formatter": { "indentStyle": "space", "indentWidth": 2 },
-  "javascript": { "formatter": { "quoteStyle": "double" } },
+  "javascript": {
+    "parser": { "unsafeParameterDecoratorsEnabled": true },
+    "formatter": { "quoteStyle": "double" }
+  },
   "linter": { "rules": { "preset": "recommended" } }
 }

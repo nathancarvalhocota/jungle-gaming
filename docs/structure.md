@@ -6,13 +6,22 @@
 src/
   main.ts
   app.module.ts
+  modules/
+    wagering/
+      domain/
+        money.ts
   platform/
     health/
       health.controller.ts
+    identity/
+      no-auth.guard.ts
     persistence/
       orm.config.ts
 tests/
+  unit/
+    money.test.ts
   integration/
+    auth.test.ts
     stack.test.ts
   support/
     stack/
@@ -24,22 +33,26 @@ tests/
 | --- | --- |
 | `src/main.ts` | Monta a aplicação e abre o servidor quando executado diretamente; exporta a factory usada pelos testes |
 | `src/app.module.ts` | Compõe dependências e controllers NestJS |
+| `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
+| `tests/unit` | Testes de domínio sem infraestrutura |
 | `src/platform/health` | Liveness HTTP |
+| `src/platform/identity` | Extensão de autenticação HTTP sem verificação de identidade |
 | `src/platform/persistence` | Configuração geral da conexão e do ORM |
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. Ainda não há domínio financeiro, repositórios da aplicação ou migrations financeiras.
+O Compose fica na raiz em `compose.yaml`. O domínio financeiro contém apenas `Money`; repositórios da aplicação e migrations financeiras continuam pendentes.
 
 ## Organização por funcionalidade
 
-A organização por funcionalidade foi aceita em [arquitetura](architecture.md). O desenho abaixo permanece como ponto de partida; criar cada pasta conforme a necessidade concreta:
+A organização por funcionalidade foi aceita em [arquitetura](architecture.md). O desenho abaixo inclui `Money`, já implementado; as demais partes financeiras continuam propostas. Criar cada pasta conforme a necessidade concreta:
 
 ```text
 src/
   modules/
     wagering/
       domain/
+        money.ts
         wallet/
         transactions/
         ledger/
@@ -65,7 +78,7 @@ tests/
 
 Dentro da funcionalidade, `domain` concentra regras e estados; `application`, casos de uso e portas; `infrastructure`, adaptadores de persistência e integrações; `presentation`, entradas como controllers. Os adaptadores devem respeitar as dependências definidas em [convenções](conventions.md).
 
-`platform` agrupa recursos técnicos gerais conforme surgirem. Adaptadores específicos do negócio permanecem na funcionalidade. `shared` só recebe conceitos com compartilhamento concreto; a posição de `Money` continua pendente. Divisões de uma solution .NET não exigem pacotes ou serviços independentes em NestJS.
+`platform` agrupa recursos técnicos gerais conforme surgirem. Adaptadores específicos do negócio permanecem na funcionalidade. `Money` está implementado em `wagering/domain/money.ts`. `shared` só recebe conceitos com compartilhamento concreto. Divisões de uma solution .NET não exigem pacotes ou serviços independentes em NestJS.
 
 Definir a localização das migrations financeiras, inbox/outbox e unidade de trabalho ao implementar persistência. A árvore não estabelece sozinha a fronteira transacional.
 
