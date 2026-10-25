@@ -10,6 +10,10 @@ src/
     wagering/
       domain/
         money.ts
+        wallet/
+          wallet.ts
+        ledger/
+          wallet-ledger-entry.ts
   platform/
     health/
       health.controller.ts
@@ -20,6 +24,8 @@ src/
 tests/
   unit/
     money.test.ts
+    wallet.test.ts
+    wallet-ledger-entry.test.ts
   integration/
     auth.test.ts
     stack.test.ts
@@ -34,6 +40,8 @@ tests/
 | `src/main.ts` | Monta a aplicação e abre o servidor quando executado diretamente; exporta a factory usada pelos testes |
 | `src/app.module.ts` | Compõe dependências e controllers NestJS |
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
+| `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
+| `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
 | `tests/unit` | Testes de domínio sem infraestrutura |
 | `src/platform/health` | Liveness HTTP |
 | `src/platform/identity` | Extensão de autenticação HTTP sem verificação de identidade |
@@ -41,11 +49,11 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. O domínio financeiro contém apenas `Money`; repositórios da aplicação e migrations financeiras continuam pendentes.
+O Compose fica na raiz em `compose.yaml`. O domínio financeiro contém `Money`, `Wallet` e `WalletLedgerEntry` em memória; repositórios da aplicação e migrations financeiras continuam pendentes.
 
 ## Organização por funcionalidade
 
-A organização por funcionalidade foi aceita em [arquitetura](architecture.md). O desenho abaixo inclui `Money`, já implementado; as demais partes financeiras continuam propostas. Criar cada pasta conforme a necessidade concreta:
+A organização por funcionalidade foi aceita em [arquitetura](architecture.md). O desenho abaixo inclui `Money`, `wallet` e `ledger`, já implementados em memória; as demais partes financeiras continuam propostas. Criar cada pasta conforme a necessidade concreta:
 
 ```text
 src/

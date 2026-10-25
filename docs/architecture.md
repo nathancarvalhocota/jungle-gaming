@@ -1,6 +1,6 @@
 # Arquitetura
 
-Requisitos obrigatórios estão no [desafio](challenge.md). Esta página registra escolhas e pendências; versões ficam em [stack](stack.md), arquivos em [estrutura](structure.md) e evidências em [testes](testing.md). A base técnica foi validada; as garantias financeiras ainda não foram implementadas.
+Requisitos obrigatórios estão no [desafio](challenge.md). Esta página registra escolhas e pendências; versões ficam em [stack](stack.md), arquivos em [estrutura](structure.md) e evidências em [testes](testing.md). A base técnica foi validada; as garantias financeiras persistentes ainda não foram implementadas.
 
 ## Decisões aceitas
 
@@ -17,6 +17,10 @@ Requisitos obrigatórios estão no [desafio](challenge.md). Esta página registr
 | Versões | Estáveis recentes, respeitando Bun 1.x; fixar dependências, lockfile e imagens após validação | Cada atualização exige conferir compatibilidade; combinação atual em [stack](stack.md) |
 | SQS local | MiniStack via Compose, evitando cadastro/token na opção avaliada de LocalStack | Emulação não comprova equivalência total com AWS; FIFO e DLQ ainda sem testes |
 | Transações | Porta de unidade de trabalho fornece repositórios vinculados à mesma transação | Acrescenta coordenação; alternativa: EntityManager diretamente no caso de uso, com acoplamento ao ORM |
+| Wallet e ledger | Implementados em memória: `debit` e `credit` constroem e retornam o lançamento antes de atualizar saldo, versão e data; falhas preservam a wallet. Ambos e `WalletLedgerEntry.create` rejeitam zero, mantendo cada movimentação bem-sucedida associada a um lançamento efetivo; `Money.zero` e abertura com zero continuam permitidos | Alternativas: criar o lançamento no caso de uso ou acumular pendências na wallet. Wallet não carrega histórico; a persistência atômica de ambos cabe à futura unidade de trabalho. LOSS não chama os métodos de movimentação |
+| Escopo da idempotência | `idempotencyKey` globalmente única no PostgreSQL; HTTP usa o header e SQS fornece a chave ao mesmo caso de uso. Mesma chave e payload igual recuperam o resultado persistido; payload divergente gera conflito | Alternativa: unicidade por provedor. Escopo global exige coordenação entre integrações; o formato sugerido `providerId:externalTransactionId` evita colisões entre provedores distintos. Constraint e tratamento da disputa ainda não implementados |
+| Identidade externa | `(providerId, externalTransactionId)` único no PostgreSQL; a mesma operação com outra chave de idempotência gera conflito, sem nova movimentação | Alternativa: reconhecer várias chaves como aliases da mesma operação, exigindo coordenação adicional. Nova operação exige novo identificador externo; implementação e testes pendentes |
+| Concorrência por wallet | Lock pessimista na linha da wallet com `SELECT ... FOR UPDATE`, adquirido antes de ler o saldo para decidir e mantido até commit/rollback; serializa operações da mesma carteira entre instâncias | Alternativas: versão otimista com retry limitado ou UPDATE condicionado. Simplifica a coordenação financeira; custa espera em carteiras disputadas. Manter transação curta, sem chamadas externas; timeouts e deadlocks exigem tratamento. Implementação e testes ainda pendentes |
 | Autenticação | Fora do escopo; prioriza correção financeira e preserva extensão futura | Sem verificação de identidade ou autorização HTTP nesta entrega; alternativa: integrar IdP agora |
 | Inicialização | Conectar PostgreSQL antes de abrir HTTP; liveness responde sem consultar dependências | Aplicação não inicia sem banco. Iniciar em estado não pronto exigiria desenho adicional de recuperação |
 
@@ -24,11 +28,17 @@ O bootstrap concentra a inicialização em `src/main.ts`, importável pelos test
 
 O limite de `Money` está centralizado em `MAX_MINOR_UNITS`, validado pelo construtor privado na criação e em todos os resultados aritméticos. Entradas externas não aceitam negativos; valores internos podem variar de `-1000000.00` a `1000000.00` para suportar negação e diferenças. O limite é nominal na moeda do objeto, sem conversão cambial. Excedê-lo gera erro de domínio, sem truncamento ou arredondamento; não há limites diferentes por aposta, depósito ou saque definidos nesta decisão. A classe é imutável em runtime e lança `MoneyError` para entradas, moedas ou resultados inválidos. `toString()` usa o formato `25.00 BRL`; `toJSON()` retorna strings com duas casas, inclusive sinal para resultados negativos. Não há factory pública de reidratação.
 
+Wallet recebe IDs e instante explicitamente: `open({ id, playerId, initialBalance, at })` e `debit/credit({ entryId, transactionId, money, at })`. A versão começa em 1 e aumenta apenas nas movimentações; datas são copiadas defensivamente. `rehydrate` restaura o estado com integridade estrutural, sem repetir transições; a factory de novos lançamentos valida também a aritmética. Abertura positiva isolada ainda não cumpre auditoria persistente: criar `OPENING` e seu `CREDIT` na mesma transação SQL permanece para o caso de uso e a unidade de trabalho, sem fabricar `transactionId` no domínio.
+
 ## Contrato transacional aceito
 
 O caso de uso delimita uma transação por `em.transactional(...)`, encapsulado no adaptador da unidade de trabalho. Estado da operação, saldo, ledger, inbox quando aplicável e outbox usam o mesmo EntityManager, inclusive para SQL explícito. Repositórios não abrem transações independentes nem fazem commits próprios; domínio e caso de uso não dependem do ORM.
 
 Cada requisição, mensagem ou trabalho usa contexto isolado. Falhas que abortam a operação propagam para rollback; rejeições de negócio são persistidas como resultados auditáveis, sem movimentação indevida. O replay deve recuperar o resultado original, incluindo o saldo observado naquele processamento.
+
+O resultado necessário ao replay será persistido no próprio registro da transação financeira, incluindo status, saldo observado, moeda e código de rejeição quando aplicável, junto da chave e do hash do payload. Reenvio idêntico recupera esse resultado, sem reaplicar saldo, ledger ou eventos de processamento. Alternativa: tabela exclusiva de idempotência, com coordenação adicional.
+
+Na disputa pela chave, usar QueryBuilder do MikroORM no adaptador, com `INSERT ... ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`, vinculado ao mesmo EntityManager transacional. Se não inserir, consultar o registro confirmado em comando seguinte sob `READ COMMITTED` e distinguir replay de conflito pelo hash, sem sobrescrever o original. Alternativa: SQL parametrizado no adaptador; evitar upsert que atualize automaticamente o resultado existente. O alvo acima cobre a chave; o tratamento da unicidade do identificador externo ainda precisa ser definido. Implementação e teste concorrente pendentes. Referências: [QueryBuilder](https://mikro-orm.io/docs/query-builder) e [isolamento PostgreSQL 18](https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED).
 
 Publicação SQS e confirmação da mensagem recebida ocorrem após commit. A outbox guarda a intenção atomicamente; publicação pode repetir após falha, exigindo deduplicação pela identidade estável do evento. Atomicidade não substitui concorrência, idempotência ou constraints.
 
@@ -44,10 +54,10 @@ Desenho futuro: IdP externo emite tokens OAuth 2.0 Client Credentials para os pr
 
 ## Pendências e propostas
 
-- **Money:** mapeamento de persistência, reconstrução de valores internos com sinal e tratamento de valores zero por operação. A implementação em memória não escolhe o tipo da coluna no banco nem restringe a aplicação a BRL.
-- **Concorrência:** proposta de lock pessimista por wallet; alternativa otimista com retry limitado. Definir timeouts, ordem dos locks e deadlocks. O lock não resolve sozinho conflitos de idempotência entre wallets.
+- **Money:** mapeamento de persistência, reconstrução de valores internos com sinal e regras de zero nas demais operações de negócio. A implementação em memória não escolhe o tipo da coluna no banco nem restringe a aplicação a BRL.
+- **Concorrência:** implementar o lock pessimista aceito e definir timeouts, ordem dos locks e tratamento de deadlocks. O lock não resolve sozinho conflitos de idempotência entre wallets; comprovar disputa na mesma carteira e paralelismo entre carteiras em pelo menos três processos.
 - **Schema:** projetar unicidade, não negatividade, ledger imutável, reversões e inbox conforme seções 5 e 6 do desafio. Correspondência entre saldo e ledger exige proteção entre tabelas; um CHECK isolado não basta.
-- **Contratos e regras:** escopo da chave, hash canônico e identificador externo repetido; referências opcionais ou ainda pendentes/rejeitadas; BET revertida por REFUND e ROLLBACK; estados, códigos de falha e respostas HTTP.
+- **Contratos e regras:** hash canônico; referências opcionais ou ainda pendentes/rejeitadas; BET revertida por REFUND e ROLLBACK; estados, códigos de falha e respostas HTTP.
 - **Workers e processos:** definir entradas API/workers, destino dos eventos, claim e recuperação da outbox, backoff, TTL/tentativas de referências, DLQ e shutdown.
 - **Consultas:** snapshot consistente da reconciliação e cursor estável do ledger.
 
