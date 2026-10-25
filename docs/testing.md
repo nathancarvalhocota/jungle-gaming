@@ -2,7 +2,7 @@
 
 ## Estado
 
-Plano de validação financeira e evidência inicial de compatibilidade. A suíte técnica em `tests/integration/stack.test.ts` já foi executada com Bun e PostgreSQL real em container. Os cenários financeiros e SQS descritos abaixo continuam pendentes; a validação técnica não os substitui.
+Plano de validação financeira e evidências de compatibilidade e Wallet zero. As suítes técnicas e de Wallet executam com Bun e PostgreSQL real em container. Os demais cenários financeiros e SQS descritos abaixo continuam pendentes; a validação inicial não os substitui.
 
 ## Compatibilidade da stack
 
@@ -60,10 +60,13 @@ Validação: `bun run typecheck` e `bun run lint` sem erros; `bun run test` com 
 
 ## Integração
 
+Para o fluxo financeiro, a fronteira principal aceita é o caso de uso com PostgreSQL real; poucos testes HTTP completos verificam o contrato e sua ligação com o processamento. Complementar com SQL direto para constraints/triggers e testes unitários de domínio, sem repetir toda a matriz em cada camada. O escopo está na [spec financeira](specs/fluxo-financeiro-persistente.md); a primeira entrega abaixo cobre somente Wallet zero.
+
 Usar containers, migrations reais e o caminho de processamento da aplicação.
 
 - Rodar migrations de ida, volta e reaplicação em banco descartável.
-- Tentar violar constraints e imutabilidade com SQL direto e papel da aplicação.
+- Verificar ida e volta de Money/Wallet/ledger com `bigint` em centésimos e moeda separada, incluindo teto e reconstrução pelas factories; nenhum valor monetário pode passar por `number`.
+- Tentar violar unicidade, não negatividade e teto por SQL direto; tentar `UPDATE`, `DELETE` e `TRUNCATE` no ledger para demonstrar seus triggers. Reverter e reaplicar também essas proteções; papel restrito da aplicação permanece melhoria futura.
 - Injetar falha entre gravações e comprovar rollback de wallet, transação, ledger, inbox e outbox.
 - Verificar replay com saldo original após outras movimentações.
 - Cobrir identificador externo repetido com outra chave e mesma chave com payload divergente.
@@ -71,6 +74,16 @@ Usar containers, migrations reais e o caminho de processamento da aplicação.
 - Confirmar ack após commit, retry, DLQ e shutdown.
 - Verificar eventos para LOSS, rejeição, referência pendente e mudança efetiva de saldo.
 - Testar reconciliação consistente e cursor sem perdas/duplicações.
+
+### Wallet zero persistida — ticket 01
+
+`tests/integration/wallet.test.ts` cobre caso de uso e PostgreSQL reais: migration de ida/volta/ida, criação/consulta, versão 1, positivo recusado sem escrita, validação runtime, disputa duplicada com um vencedor e CHECKs por SQL direto. Fixtures com `0.01`, `25.37` e `1000000.00` demonstram `bigint` exato, IDs, versão e datas preservados por `rehydrate`; não autorizam abertura positiva pela API. HTTP verifica códigos aprovados, JSON malformado e UUID inválido. Três testes do filtro usam causas controladas para 503/500; não demonstram indisponibilidade real do servidor.
+
+**Validação:** `bun run typecheck` e `bun run lint` passaram. Os testes específicos tiveram 12 passando, 0 falhas e 77 asserções; `bun run test` teve 132 passando, 0 falhas e 540 asserções, incluindo PostgreSQL real e os testes anteriores preservados. Os comandos de migration foram exercitados em banco descartável.
+
+**Isolamento:** subprocessos de migration recebem URL descartável explícita e nome esperado. O runner confere `current_database()` antes de migrar; o teste demonstra recusa de nome divergente antes da escrita. A limpeza exige prefixo permitido e confirmação do banco conectado; sem conexão inicializada, não é autorizada.
+
+**Limites:** não há abertura positiva auditável, movimentação persistida, ledger/outbox, lock financeiro, idempotência ou prova de três instâncias. A concorrência demonstrada aqui é a unicidade de criação por jogador/moeda. A migration cria somente Wallet.
 
 ## Concorrência e recuperação
 

@@ -6,7 +6,7 @@ Serviço financeiro de apostas com precisão monetária, idempotência persisten
 
 Bootstrap técnico executável: NestJS sob Bun, conexão MikroORM/PostgreSQL e `GET /health/live`. A suíte de compatibilidade usa PostgreSQL real em container e um banco descartável por execução para verificar migrations, commit, rollback, uma constraint e transporte decimal exato.
 
-A entrada HTTP usa `NoAuthGuard` sem verificar credenciais nem criar identidade; health permanece público mesmo na substituição desse provider. `Money` está implementado e testado em memória, com aritmética exata em `bigint`. Wallet, persistência financeira, API de apostas, unidade de trabalho da aplicação, autenticação real, readiness e workers ainda não estão implementados. Os testes atuais não demonstram as garantias financeiras persistentes do desafio.
+A entrada HTTP usa `NoAuthGuard` sem verificar credenciais nem criar identidade; health permanece público mesmo na substituição desse provider. Money, Wallet e lançamento existem no domínio. `POST /wallets` cria uma carteira com saldo `0.00 BRL`, e `GET /wallets/:walletId` recupera seu estado do PostgreSQL. Abertura positiva, operações de apostas, ledger/outbox persistidos, autenticação real, readiness e workers permanecem pendentes; as garantias demonstradas neste estágio não cobrem o fluxo financeiro completo.
 
 O enunciado original está em [challenge.md](docs/challenge.md).
 
@@ -41,23 +41,26 @@ Pré-requisitos: Bun 1.4.4 e Docker com Compose funcionando. No PowerShell, na r
 ```powershell
 bun install --frozen-lockfile
 # Copy only if your local configuration does not exist yet.
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d --wait postgres
 bun run typecheck
 bun run lint
 bun run test:stack
+bun run db:migrate
 bun run start
 ```
 
 A API escuta em `http://127.0.0.1:3000`. Em outro terminal, `Invoke-RestMethod http://127.0.0.1:3000/health/live` retorna `{"status":"ok"}`. Use Ctrl+C para encerrar. `bun run dev` executa com observação de alterações; `bun run format` aplica formatação e correções seguras de lint.
 
-`bun run test` executa a suíte disponível; `bun run test:stack` seleciona apenas a compatibilidade. O próprio teste aplica, reverte e reaplica a migration versionada em `tests/support/stack/migration.ts`. Ainda não existem migrations do domínio financeiro ou comandos para migrar seu schema.
+`bun run db:migrate` aplica as migrations no banco configurado em `DATABASE_URL`; confira esse destino antes de executar. `bun run test` executa a suíte completa; `bun run test:stack` seleciona apenas o ensaio de compatibilidade. Os testes aplicam, revertem e reaplicam migrations em bancos descartáveis. O teste financeiro exercita também a CLI de migrations, com URL explícita e verificação do nome esperado antes de alterar o schema.
 
-O PostgreSQL é publicado apenas em `127.0.0.1:5432`, com credenciais locais descartáveis em `.env.example` e `compose.yaml`. O usuário local tem permissão para criar/remover bancos: a suíte cria `stack_validation_<uuid>`, usa conexões independentes e remove somente esse banco ao terminar. As tabelas de ensaio não são criadas em `jungle_gaming`. Essa configuração não define as permissões do futuro papel da aplicação financeira.
+Para testar no Postman, envie `POST http://127.0.0.1:3000/wallets` com corpo JSON `{"playerId":"player-demo","initialBalance":{"amount":"0.00","currency":"BRL"}}`. A resposta 201 inclui o `id`; consulte-o em `GET /wallets/:walletId`. Saldo positivo retorna temporariamente 422 sem escrita, e jogador/moeda duplicado retorna 409.
+
+O PostgreSQL é publicado apenas em `127.0.0.1:5432`, com credenciais locais descartáveis em `.env.example` e `compose.yaml`. O usuário local tem permissão para criar/remover bancos: as suítes usam bancos gerados `stack_validation_<uuid>` e `wallet_validation_<uuid>`, com conexões independentes. O teste financeiro verifica o destino descartável antes das migrations e da limpeza. Essa configuração não define as permissões do futuro papel da aplicação financeira.
 
 O serviço PostgreSQL permanece disponível após os testes. Para pará-lo, use `docker compose stop postgres`, preservando seu volume e o MiniStack. Para iniciar o emulador, use `docker compose up -d ministack`.
 
-Evidências, incidentes corrigidos e limites estão em [docs/testing.md](docs/testing.md).
+Evidências dos testes e limites estão em [docs/testing.md](docs/testing.md).
 
 ## Processo de construção
 

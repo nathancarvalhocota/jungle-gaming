@@ -18,7 +18,7 @@ Consultar [estrutura](structure.md) para localizar código e [arquitetura](archi
 - Aplicação usa domínio e portas; detalhes SQL/SQS ficam nos adaptadores.
 - Módulos NestJS fazem a composição de providers e tokens.
 - Repositórios participam da unidade de trabalho; não confirmam independentemente uma operação financeira.
-- Avaliar registros ORM e mappers separados para preservar construtores e rehydrate; justificar a duplicação necessária.
+- Descrever persistência por schemas MikroORM sem classes espelhadas; inferir os tipos e converter no repositório, preservando as factories de reidratação conforme [arquitetura](architecture.md).
 - Shared recebe apenas conceitos cujo uso por mais de uma funcionalidade tenha sido demonstrado.
 
 ## Idioma e nomenclatura

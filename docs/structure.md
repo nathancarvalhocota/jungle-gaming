@@ -14,6 +14,19 @@ src/
           wallet.ts
         ledger/
           wallet-ledger-entry.ts
+      application/
+        wallet-ports.ts
+        wallet.errors.ts
+        wallet.use-cases.ts
+      infrastructure/persistence/
+        wallet.schema.ts
+        wallet.repository.ts
+        wallet.unit-of-work.ts
+        migrations/migration-202610250002-wallet-zero.ts
+      presentation/
+        wallet.controller.ts
+        wallet-http-error.filter.ts
+      wagering.module.ts
   platform/
     health/
       health.controller.ts
@@ -21,14 +34,17 @@ src/
       no-auth.guard.ts
     persistence/
       orm.config.ts
+      migrate.ts
 tests/
   unit/
     money.test.ts
     wallet.test.ts
     wallet-ledger-entry.test.ts
+    wallet-http-error.filter.test.ts
   integration/
     auth.test.ts
     stack.test.ts
+    wallet.test.ts
   support/
     stack/
       migration.ts
@@ -42,6 +58,9 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
+| `src/modules/wagering/application` | Criação/consulta de Wallet zero e portas de persistência/transação |
+| `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
+| `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
 | `tests/unit` | Testes de domínio sem infraestrutura |
 | `src/platform/health` | Liveness HTTP |
 | `src/platform/identity` | Extensão de autenticação HTTP sem verificação de identidade |
@@ -49,7 +68,7 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. O domínio financeiro contém `Money`, `Wallet` e `WalletLedgerEntry` em memória; repositórios da aplicação e migrations financeiras continuam pendentes.
+O Compose fica na raiz em `compose.yaml`. Wallet zero já possui API e persistência; movimentações, transações financeiras, ledger persistido e outbox continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup.
 
 ## Organização por funcionalidade
 
@@ -88,7 +107,9 @@ Dentro da funcionalidade, `domain` concentra regras e estados; `application`, ca
 
 `platform` agrupa recursos técnicos gerais conforme surgirem. Adaptadores específicos do negócio permanecem na funcionalidade. `Money` está implementado em `wagering/domain/money.ts`. `shared` só recebe conceitos com compartilhamento concreto. Divisões de uma solution .NET não exigem pacotes ou serviços independentes em NestJS.
 
-Definir a localização das migrations financeiras, inbox/outbox e unidade de trabalho ao implementar persistência. A árvore não estabelece sozinha a fronteira transacional.
+As migrations e a unidade de trabalho de Wallet já estão em `wagering/infrastructure/persistence`; inbox/outbox continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
+
+O schema de Wallet e sua conversão já ficam em `wagering/infrastructure`, sem classe de domínio espelhada. Os demais schemas financeiros continuam pendentes, conforme [arquitetura](architecture.md).
 
 ## Documentação
 
@@ -101,5 +122,6 @@ Definir a localização das migrations financeiras, inbox/outbox e unidade de tr
 | [Arquitetura](architecture.md) | Decisões, alternativas e consequências |
 | [Convenções](conventions.md) | Regras de escrita e manutenção do código |
 | [Testes](testing.md) | Estratégia, evidências e limitações |
+| [Spec financeira](specs/fluxo-financeiro-persistente.md) | Escopo de integração, critérios de teste e políticas pendentes; implementação não autorizada pela publicação |
 
 Documentos usam nomes minúsculos; `README.md` e `AGENTS.md` mantêm seus nomes convencionais na raiz. `AGENTS.md` e `docs/agents/` são versionados. O roadmap e a pesquisa são apoio local excluído em `.git/info/exclude`; `.scratch/` é local e está no `.gitignore`.
