@@ -52,7 +52,9 @@ export class TransactionUseCases {
             ? WagerTransactionKind.Bet
             : input.kind === "WIN"
               ? WagerTransactionKind.Win
-              : WagerTransactionKind.Loss,
+              : input.kind === "LOSS"
+                ? WagerTransactionKind.Loss
+                : WagerTransactionKind.Refund,
         money,
         id: randomUUID(),
         idempotencyKey: validated.key,
@@ -102,11 +104,18 @@ export class TransactionUseCases {
         );
         return result(transaction, false);
       }
+      if (
+        !failure &&
+        input.kind === "REFUND" &&
+        referenceId &&
+        (await repository.hasProcessedReversal(referenceId))
+      )
+        failure = FailureCode.ReferenceAlreadyReversed;
       if (!failure && input.kind === "BET" && wallet.balance.isLessThan(money))
         failure = FailureCode.InsufficientFunds;
       if (
         !failure &&
-        input.kind === "WIN" &&
+        (input.kind === "WIN" || input.kind === "REFUND") &&
         BigInt(wallet.balance.toJSON().amount.replace(".", "")) +
           BigInt(money.toJSON().amount.replace(".", "")) >
           Money.MAX_MINOR_UNITS
@@ -127,7 +136,7 @@ export class TransactionUseCases {
         const entry =
           input.kind === "LOSS"
             ? undefined
-            : wallet[input.kind === "WIN" ? "credit" : "debit"]({
+            : wallet[input.kind === "BET" ? "debit" : "credit"]({
                 entryId: randomUUID(),
                 transactionId: transaction.id,
                 money,

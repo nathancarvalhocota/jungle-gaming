@@ -98,11 +98,13 @@ describe("WIN/LOSS and optional references in PostgreSQL", () => {
     await useCases.submit(input(w, "BET", "1.00"), randomUUID());
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(3);
     await state(w.id, "9900", 2, 1, 1, 2);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(4);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(5);
     await expect(
       sql(
         "update wallet_ledger_entries set money_minor_units=money_minor_units where wallet_id=?",
@@ -512,6 +514,8 @@ describe("WIN/LOSS and optional references in PostgreSQL", () => {
       code: "23503",
       constraint: "transactions_reference_fk",
     });
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await expect(db.orm.migrator.down()).rejects.toMatchObject({
       code: "23514",

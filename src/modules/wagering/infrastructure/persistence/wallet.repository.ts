@@ -93,7 +93,8 @@ export class WalletRepository {
       (record.kind !== WagerTransactionKind.Opening &&
         record.kind !== WagerTransactionKind.Bet &&
         record.kind !== WagerTransactionKind.Win &&
-        record.kind !== WagerTransactionKind.Loss) ||
+        record.kind !== WagerTransactionKind.Loss &&
+        record.kind !== WagerTransactionKind.Refund) ||
       (record.status !== WagerTransactionStatus.Pending &&
         record.status !== WagerTransactionStatus.Processed &&
         record.status !== WagerTransactionStatus.Rejected &&

@@ -38,6 +38,15 @@ export class TransactionRepository
     );
     return row ? this.findById(id) : undefined;
   }
+  async hasProcessedReversal(referenceId: string): Promise<boolean> {
+    return (
+      (await this.transactionEm.count(WagerTransactionSchema, {
+        referenceTransactionId: referenceId,
+        kind: { $in: ["REFUND", "ROLLBACK"] },
+        status: "PROCESSED",
+      })) > 0
+    );
+  }
   async claim(transaction: WagerTransaction): Promise<boolean> {
     const rows = await this.transactionEm
       .createQueryBuilder(WagerTransactionSchema)
@@ -123,6 +132,7 @@ export class MikroOrmTransactionUnitOfWork implements TransactionUnitOfWork {
           { cause: error },
         );
       if (
+        hasSqlError(error, "23505", "transactions_processed_reversal_unique") ||
         ["40P01", "55P03", "57014", "40001"].some((code) =>
           hasSqlError(error, code),
         )

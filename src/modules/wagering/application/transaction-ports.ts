@@ -9,6 +9,7 @@ export interface TransactionRepositoryPort extends WalletRepositoryPort {
     externalTransactionId: string,
   ): Promise<WagerTransaction | undefined>;
   lockWallet(id: string): Promise<Wallet | undefined>;
+  hasProcessedReversal(referenceId: string): Promise<boolean>;
   claim(transaction: WagerTransaction): Promise<boolean>;
   saveTransaction(transaction: WagerTransaction): Promise<void>;
   saveWallet(wallet: Wallet): Promise<void>;

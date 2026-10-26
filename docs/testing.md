@@ -12,7 +12,7 @@ Ambiente validado: Windows, Bun 1.4.4, PostgreSQL 18.6 em Docker, NestJS 12.2.0 
 | --- | --- |
 | `bun run typecheck` | Tipos estritos sem erros |
 | `bun run lint` | Biome sem erros ou avisos |
-| `bun run test` | 170 testes passaram, zero falhas, 1182 asserções |
+| `bun run test` | 182 testes passaram, zero falhas, 1362 asserções |
 | `git diff --check` | Sem erros de whitespace |
 
 `bun run test` usa `tests/support/run-tests.ts`: a conexão administrativa deriva a URL configurada e troca o banco por `/postgres`, sem conectar ao banco de desenvolvimento. Um banco `suite_validation_<uuid>` recebe a execução completa, inclusive testes de autenticação e bootstrap, por variável `DATABASE_URL` explícita no subprocesso. As suítes técnicas e financeiras criam bancos adicionais `stack_validation_<uuid>`, `wallet_validation_<uuid>` e `bet_validation_<uuid>`, com observadores independentes. Prefixo gerado e `current_database()` precisam coincidir antes de migrar e limpar. A CLI financeira recebe também nome esperado e URL explícita; nome divergente é recusado antes da migration. Sem alvo confirmado, não se autoriza limpeza. Logs de teste mostram apenas nomes dos bancos, sem URLs ou credenciais.
@@ -79,8 +79,23 @@ A suíte de autenticação verifica ausência de identidade fabricada, acesso co
 
 O worker de referências, TTL, backoff, SQS, publicação e recuperação após crash não são demonstrados por essas provas. Persistência da pendência e intenção de evento não equivalem a reprocessamento ou publicação.
 
+### REFUND integral persistente
+
+`tests/integration/refund.test.ts` usa casos de uso reais, PostgreSQL descartável e observador independente; `tests/unit/refund.test.ts` complementa invariantes e contratos. Os testes anteriores são preservados, com ajuste da quantidade e sequência de migrations.
+
+- Crédito integral com centésimos, referência BET e jogo diferente, consultas interna/externa, reidratação, CREDIT e dois eventos versionados. Cinquenta duplicatas têm um único crédito; replay após outra movimentação conserva o saldo original. Mudança de payload ou chave externa produz os conflitos existentes.
+- Contexto, kind e estado precedem valor; valor diferente precede compensação anterior e teto. Referência ausente/PENDING, BET rejeitada, autorreferência, provedor distinto e Wallet distinta não creditam. Pendência persiste um evento e o replay não reprocessa depois da chegada da BET. A regra comum de contexto, incluindo moeda, mantém as provas de WIN/LOSS.
+- Teto inclusivo permite a última unidade; estouro gera rejeição auditável. Valor divergente gera REFERENCE_AMOUNT_MISMATCH; outra compensação direta gera REFERENCE_ALREADY_REVERSED. Rejeições preservam saldo, versão, data e ledger; eventos não se multiplicam no replay.
+- Falha após cada escrita real do caminho processado, pendente e rejeitado desfaz claim, resultado, Wallet, ledger e outbox. O observador não vê efeitos parciais antes do commit ou após rollback.
+- Três subprocessos com PIDs distintos, URL explícita e barreira IPC disputam a mesma BET com IDs externos/chaves diferentes: uma REFUND processada, duas rejeições auditáveis, um crédito compensatório e saldo reconstruído pelo ledger.
+- SQL direto exige SQLSTATE e nome exato dos checks e do índice de compensação. Migration incremental reverte/reaplica com OPENING/BET/WIN/LOSS existentes; down com REFUND falha atomicamente e mantém dados e índice. O predicado do índice inclui REFUND e o futuro ROLLBACK; não prova processamento de ROLLBACK.
+- Fallback controlado: após uma REFUND legítima, somente no teste a consulta de compensação é desviada para permitir tentativa duplicada. O índice real provoca 23505; a unidade de trabalho desfaz tudo antes de responder 503, preserva a causa e não deixa claim persistido. Reenvio normal da mesma chave em nova unidade de trabalho persiste rejeição e permite replay. Essa prova exercita a defesa SQL, separadamente da disputa normal de três processos.
+- Poucos percursos HTTP exercitam 201/200, 202/replay, 422/replay, consultas e 400 para ausência/null/zero/ROLLBACK ainda não implementado. Vetores literais WIN/LOSS com e sem referência foram calculados diretamente de `3b73bb3`; o vetor literal BET existente permanece igual.
+
+Validação completa: `bun run typecheck`, `bun run lint` e `bun run test` aprovados, com 182 testes, zero falhas e 1362 asserções. As evidências não incluem workers, publicação, recuperação após crash ou FAILED, que continua inalcançável.
+
 ## Limites e continuidade
 
-Ainda não foram demonstrados: REFUND/ROLLBACK persistentes, worker de referências, consultas de ledger/reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
+Ainda não foram demonstrados: ROLLBACK persistente, worker de referências, consultas de ledger/reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
 
 Para os próximos tickets, preservar as evidências de BET e ampliar os cenários com referências fora de ordem, reversões e recuperação. Em cada cenário financeiro, conferir saldo reconstruído pelo ledger e ausência de efeitos extras. Mocks não substituem PostgreSQL ou SQS reais. Indisponibilidade de infraestrutura deve ser informada como cenário não verificado.

@@ -38,7 +38,8 @@ export type CreateBetProps = CreateOpeningProps & ExternalTransactionIdentity;
 export type ExternalTransactionKind =
   | WagerTransactionKind.Bet
   | WagerTransactionKind.Win
-  | WagerTransactionKind.Loss;
+  | WagerTransactionKind.Loss
+  | WagerTransactionKind.Refund;
 export type CreateExternalProps = CreateBetProps & {
   kind: ExternalTransactionKind;
   referenceExternalTransactionId?: string;
@@ -48,6 +49,8 @@ export enum FailureCode {
   ReferenceKindMismatch = "REFERENCE_KIND_MISMATCH",
   ReferenceContextMismatch = "REFERENCE_CONTEXT_MISMATCH",
   ReferenceNotProcessed = "REFERENCE_NOT_PROCESSED",
+  ReferenceAmountMismatch = "REFERENCE_AMOUNT_MISMATCH",
+  ReferenceAlreadyReversed = "REFERENCE_ALREADY_REVERSED",
   BalanceLimitExceeded = "BALANCE_LIMIT_EXCEEDED",
 }
 
@@ -120,6 +123,7 @@ export class WagerTransaction {
         WagerTransactionKind.Bet,
         WagerTransactionKind.Win,
         WagerTransactionKind.Loss,
+        WagerTransactionKind.Refund,
       ].includes(state.kind) &&
       state.external
     ) {
@@ -162,11 +166,18 @@ export class WagerTransaction {
       state.referenceExternalTransactionId !== undefined &&
       (typeof state.referenceExternalTransactionId !== "string" ||
         !state.referenceExternalTransactionId.trim() ||
-        ![WagerTransactionKind.Win, WagerTransactionKind.Loss].includes(
-          state.kind,
-        ))
+        ![
+          WagerTransactionKind.Win,
+          WagerTransactionKind.Loss,
+          WagerTransactionKind.Refund,
+        ].includes(state.kind))
     )
       throw new WagerTransactionError("Invalid external reference");
+    if (
+      state.kind === WagerTransactionKind.Refund &&
+      !state.referenceExternalTransactionId
+    )
+      throw new WagerTransactionError("Refund requires a reference");
     if (
       state.referenceTransactionId !== undefined &&
       (typeof state.referenceTransactionId !== "string" ||
@@ -387,6 +398,12 @@ export class WagerTransaction {
       return FailureCode.ReferenceKindMismatch;
     if (reference.status === WagerTransactionStatus.Rejected)
       return FailureCode.ReferenceNotProcessed;
+    if (
+      this.kind === WagerTransactionKind.Refund &&
+      reference.status === WagerTransactionStatus.Processed &&
+      !this.money.equals(reference.money)
+    )
+      return FailureCode.ReferenceAmountMismatch;
     return undefined;
   }
   private assertReference(id: string | undefined, processed: boolean): void {
@@ -433,22 +450,32 @@ function validRejection(
 ): boolean {
   if (kind === WagerTransactionKind.Bet)
     return code === FailureCode.InsufficientFunds && balance.isLessThan(money);
-  if (kind !== WagerTransactionKind.Win && kind !== WagerTransactionKind.Loss)
+  if (
+    kind !== WagerTransactionKind.Win &&
+    kind !== WagerTransactionKind.Loss &&
+    kind !== WagerTransactionKind.Refund
+  )
     return false;
   if (code === FailureCode.BalanceLimitExceeded)
     return (
-      kind === WagerTransactionKind.Win &&
+      (kind === WagerTransactionKind.Win ||
+        kind === WagerTransactionKind.Refund) &&
       BigInt(balance.toJSON().amount.replace(".", "")) +
         BigInt(money.toJSON().amount.replace(".", "")) >
         Money.MAX_MINOR_UNITS
     );
   return (
     reference !== undefined &&
-    [
-      FailureCode.ReferenceKindMismatch,
-      FailureCode.ReferenceContextMismatch,
-      FailureCode.ReferenceNotProcessed,
-    ].includes(code as FailureCode)
+    ((kind === WagerTransactionKind.Refund &&
+      [
+        FailureCode.ReferenceAmountMismatch,
+        FailureCode.ReferenceAlreadyReversed,
+      ].includes(code as FailureCode)) ||
+      [
+        FailureCode.ReferenceKindMismatch,
+        FailureCode.ReferenceContextMismatch,
+        FailureCode.ReferenceNotProcessed,
+      ].includes(code as FailureCode))
   );
 }
 
