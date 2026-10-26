@@ -7,7 +7,6 @@ import {
 import { BaseExceptionFilter, HttpAdapterHost } from "@nestjs/core";
 import {
   InvalidWalletInputError,
-  OpeningBalanceNotAvailableError,
   UnsupportedWalletCurrencyError,
   WalletAlreadyExistsError,
   WalletNotFoundError,
@@ -77,13 +76,6 @@ function mapWalletError(error: unknown): {
       statusCode: 404,
       code: "WALLET_NOT_FOUND",
       message: "Wallet was not found",
-    };
-  }
-  if (error instanceof OpeningBalanceNotAvailableError) {
-    return {
-      statusCode: 422,
-      code: "OPENING_BALANCE_NOT_AVAILABLE",
-      message: "Positive opening balance is not available yet",
     };
   }
   if (isUnavailableDatabaseError(error)) {

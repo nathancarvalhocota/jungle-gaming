@@ -14,6 +14,12 @@ src/
           wallet.ts
         ledger/
           wallet-ledger-entry.ts
+        transactions/
+          wager-transaction.ts
+        events/
+          integration-event.ts
+          opening-events.ts
+          outbox-message.ts
       application/
         wallet-ports.ts
         wallet.errors.ts
@@ -22,7 +28,9 @@ src/
         wallet.schema.ts
         wallet.repository.ts
         wallet.unit-of-work.ts
+        opening.schema.ts
         migrations/migration-202610250002-wallet-zero.ts
+        migrations/migration-202610250003-auditable-opening.ts
       presentation/
         wallet.controller.ts
         wallet-http-error.filter.ts
@@ -41,11 +49,13 @@ tests/
     wallet.test.ts
     wallet-ledger-entry.test.ts
     wallet-http-error.filter.test.ts
+    auditable-opening.test.ts
   integration/
     auth.test.ts
     stack.test.ts
     wallet.test.ts
   support/
+    run-tests.ts
     stack/
       migration.ts
       probe.schema.ts
@@ -58,7 +68,9 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
-| `src/modules/wagering/application` | Criação/consulta de Wallet zero e portas de persistência/transação |
+| `src/modules/wagering/application` | Criação/consulta de Wallet, coordenação atômica da abertura auditável e portas de persistência/transação |
+| `src/modules/wagering/domain/transactions` | OPENING interna, estado pendente/processado e reidratação |
+| `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
 | `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
 | `tests/unit` | Testes de domínio sem infraestrutura |
@@ -68,7 +80,7 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. Wallet zero já possui API e persistência; movimentações, transações financeiras, ledger persistido e outbox continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup.
+O Compose fica na raiz em `compose.yaml`. Wallet possui API e persistência com OPENING, ledger e outbox na abertura positiva; demais operações e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
 
 ## Organização por funcionalidade
 
@@ -107,9 +119,9 @@ Dentro da funcionalidade, `domain` concentra regras e estados; `application`, ca
 
 `platform` agrupa recursos técnicos gerais conforme surgirem. Adaptadores específicos do negócio permanecem na funcionalidade. `Money` está implementado em `wagering/domain/money.ts`. `shared` só recebe conceitos com compartilhamento concreto. Divisões de uma solution .NET não exigem pacotes ou serviços independentes em NestJS.
 
-As migrations e a unidade de trabalho de Wallet já estão em `wagering/infrastructure/persistence`; inbox/outbox continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
+As migrations, unidade de trabalho, schemas de Wallet, OPENING, ledger e outbox estão em `wagering/infrastructure/persistence`; inbox e publicação continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
 
-O schema de Wallet e sua conversão já ficam em `wagering/infrastructure`, sem classe de domínio espelhada. Os demais schemas financeiros continuam pendentes, conforme [arquitetura](architecture.md).
+Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. Operações externas e inbox continuam pendentes, conforme [arquitetura](architecture.md).
 
 ## Documentação
 

@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test tests --timeout 30000",
+    "test": "bun run tests/support/run-tests.ts",
     "test:stack": "bun test tests/integration/stack.test.ts --timeout 30000"
   },
   "dependencies": {

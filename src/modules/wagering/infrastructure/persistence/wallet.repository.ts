@@ -1,7 +1,22 @@
 import type { EntityManager } from "@mikro-orm/postgresql";
 import { WalletAlreadyExistsError } from "../../application/wallet.errors.ts";
+import { OutboxMessage } from "../../domain/events/outbox-message.ts";
+import {
+  LedgerDirection,
+  WalletLedgerEntry,
+} from "../../domain/ledger/wallet-ledger-entry.ts";
 import { Money } from "../../domain/money.ts";
+import {
+  WagerTransaction,
+  WagerTransactionKind,
+  WagerTransactionStatus,
+} from "../../domain/transactions/wager-transaction.ts";
 import { Wallet } from "../../domain/wallet/wallet.ts";
+import {
+  OutboxMessageSchema,
+  WagerTransactionSchema,
+  WalletLedgerEntrySchema,
+} from "./opening.schema.ts";
 import { type WalletRecord, WalletSchema } from "./wallet.schema.ts";
 
 export class WalletRepository {
@@ -38,6 +53,118 @@ export class WalletRepository {
     return record ? this.toDomain(record) : undefined;
   }
 
+  async createTransaction(transaction: WagerTransaction): Promise<void> {
+    this.em.persist(
+      this.em.create(WagerTransactionSchema, {
+        id: transaction.id,
+        walletId: transaction.walletId,
+        playerId: transaction.playerId,
+        origin: transaction.origin,
+        kind: transaction.kind,
+        status: transaction.status,
+        currency: transaction.money.currency,
+        moneyMinorUnits: minorUnits(transaction.money),
+        balanceMinorUnits: transaction.balance
+          ? minorUnits(transaction.balance)
+          : null,
+        createdAt: transaction.createdAt,
+        processedAt: transaction.processedAt ?? null,
+      }),
+    );
+    await this.em.flush();
+  }
+
+  async findTransaction(id: string): Promise<WagerTransaction | undefined> {
+    const record = await this.em.findOne(WagerTransactionSchema, { id });
+    if (!record) return undefined;
+    if (
+      record.origin !== "INTERNAL" ||
+      record.kind !== WagerTransactionKind.Opening ||
+      (record.status !== WagerTransactionStatus.Pending &&
+        record.status !== WagerTransactionStatus.Processed)
+    )
+      throw new Error("Unsupported stored transaction");
+    return WagerTransaction.rehydrate({
+      id: record.id,
+      walletId: record.walletId,
+      playerId: record.playerId,
+      origin: record.origin,
+      kind: record.kind,
+      status: record.status,
+      money: readMoney(record.moneyMinorUnits, record.currency),
+      balance:
+        record.balanceMinorUnits == null
+          ? undefined
+          : readMoney(record.balanceMinorUnits, record.currency),
+      createdAt: record.createdAt,
+      processedAt: record.processedAt ?? undefined,
+    });
+  }
+
+  async createLedgerEntry(entry: WalletLedgerEntry): Promise<void> {
+    this.em.persist(
+      this.em.create(WalletLedgerEntrySchema, {
+        id: entry.id,
+        walletId: entry.walletId,
+        transactionId: entry.transactionId,
+        direction: entry.direction,
+        currency: entry.money.currency,
+        moneyMinorUnits: minorUnits(entry.money),
+        balanceBeforeMinorUnits: minorUnits(entry.balanceBefore),
+        balanceAfterMinorUnits: minorUnits(entry.balanceAfter),
+        createdAt: entry.createdAt,
+      }),
+    );
+    await this.em.flush();
+  }
+
+  async findLedgerEntry(id: string): Promise<WalletLedgerEntry | undefined> {
+    const record = await this.em.findOne(WalletLedgerEntrySchema, { id });
+    if (!record) return undefined;
+    if (
+      record.direction !== LedgerDirection.Credit &&
+      record.direction !== LedgerDirection.Debit
+    )
+      throw new Error("Invalid stored ledger direction");
+    return WalletLedgerEntry.rehydrate({
+      id: record.id,
+      walletId: record.walletId,
+      transactionId: record.transactionId,
+      direction: record.direction,
+      money: readMoney(record.moneyMinorUnits, record.currency),
+      balanceBefore: readMoney(record.balanceBeforeMinorUnits, record.currency),
+      balanceAfter: readMoney(record.balanceAfterMinorUnits, record.currency),
+      createdAt: record.createdAt,
+    });
+  }
+
+  async enqueue(message: OutboxMessage): Promise<void> {
+    this.em.persist(
+      this.em.create(OutboxMessageSchema, {
+        id: message.id,
+        aggregateId: message.aggregateId,
+        eventType: message.eventType,
+        payload: message.payload,
+        occurredAt: message.occurredAt,
+        attempts: message.attempts,
+        nextAttemptAt: message.nextAttemptAt ?? null,
+        publishedAt: message.publishedAt ?? null,
+      }),
+    );
+    await this.em.flush();
+  }
+
+  async findOutboxMessage(id: string): Promise<OutboxMessage | undefined> {
+    const record = await this.em.findOne(OutboxMessageSchema, { id });
+    return record
+      ? OutboxMessage.rehydrate({
+          ...record,
+          nextAttemptAt: record.nextAttemptAt ?? undefined,
+          publishedAt: record.publishedAt ?? undefined,
+        })
+      : undefined;
+  }
+
   private toDomain(record: WalletRecord): Wallet {
     const balance = Money.from({
       amount: formatMinorUnits(BigInt(record.balanceMinorUnits)),
@@ -53,6 +180,13 @@ export class WalletRepository {
       updatedAt: record.updatedAt,
     });
   }
+}
+
+function minorUnits(money: Money): bigint {
+  return BigInt(money.toJSON().amount.replace(".", ""));
+}
+function readMoney(value: bigint, currency: string): Money {
+  return Money.from({ amount: formatMinorUnits(BigInt(value)), currency });
 }
 
 function formatMinorUnits(value: bigint): string {

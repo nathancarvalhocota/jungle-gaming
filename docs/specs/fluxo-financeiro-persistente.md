@@ -1,6 +1,6 @@
 # Fluxo financeiro persistente
 
-Estado: especificação de integração; execução autorizada por ticket. Somente o ticket inicial de Wallet com saldo zero está autorizado neste momento; os demais aguardam nova delegação após revisão.
+Estado: especificação de integração; execução autorizada por ticket. Wallet com saldo zero foi entregue no commit daade6f; abertura positiva auditável está autorizada agora. Os demais tickets aguardam nova delegação após revisão.
 
 ## Problema
 

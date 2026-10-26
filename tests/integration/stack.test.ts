@@ -30,7 +30,12 @@ describe("Bun + NestJS + MikroORM + PostgreSQL", () => {
       throw new Error("DATABASE_URL is required for the stack validation");
     }
     const baseOptions = createOrmOptions();
-    admin = await MikroORM.init(baseOptions);
+    const adminUrl = new URL(previousUrl);
+    adminUrl.pathname = "/postgres";
+    admin = await MikroORM.init({
+      ...baseOptions,
+      clientUrl: adminUrl.toString(),
+    });
 
     // Only internally generated database names may be interpolated here.
     await admin.em.getConnection().execute(`create database "${databaseName}"`);
@@ -49,14 +54,23 @@ describe("Bun + NestJS + MikroORM + PostgreSQL", () => {
     };
     orm = await MikroORM.init(options);
     observer = await MikroORM.init(options);
+    await assertDisposableTarget(observer);
   });
 
   afterAll(async () => {
+    let cleanupVerified = false;
     try {
-      await app?.close();
-      await observer?.close(true);
-      await orm?.close(true);
-      if (admin && databaseCreated) {
+      try {
+        if (observer) {
+          await assertDisposableTarget(observer);
+          cleanupVerified = true;
+        }
+      } finally {
+        await app?.close();
+        await observer?.close(true);
+        await orm?.close(true);
+      }
+      if (admin && databaseCreated && cleanupVerified) {
         await admin.em
           .getConnection()
           .execute(`drop database "${databaseName}" with (force)`);
@@ -80,6 +94,7 @@ describe("Bun + NestJS + MikroORM + PostgreSQL", () => {
   });
 
   test("aplica, reverte e reaplica migration no banco descartável", async () => {
+    await assertDisposableTarget(orm);
     const migrator = orm.migrator;
     expect(await migrator.getPending()).toHaveLength(1);
     await migrator.up();
@@ -95,6 +110,18 @@ describe("Bun + NestJS + MikroORM + PostgreSQL", () => {
     await migrator.up();
     expect(await migrator.getPending()).toHaveLength(0);
   });
+
+  async function assertDisposableTarget(connection: MikroORM): Promise<void> {
+    const [target] = await connection.em
+      .getConnection()
+      .execute<{ database: string }[]>("select current_database() as database");
+    if (
+      !/^stack_validation_[a-f0-9]{32}$/.test(databaseName) ||
+      target?.database !== databaseName
+    ) {
+      throw new Error("Refusing an unexpected disposable database target");
+    }
+  }
 
   test("confirma duas tabelas juntas e preserva decimal acima da precisão de number", async () => {
     const recordId = randomUUID();

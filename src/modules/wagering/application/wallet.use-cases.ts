@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto";
+import {
+  WagerTransactionProcessed,
+  WalletBalanceChanged,
+} from "../domain/events/opening-events.ts";
+import { OutboxMessage } from "../domain/events/outbox-message.ts";
+import {
+  LedgerDirection,
+  WalletLedgerEntry,
+} from "../domain/ledger/wallet-ledger-entry.ts";
 import { Money, MoneyError } from "../domain/money.ts";
+import { WagerTransaction } from "../domain/transactions/wager-transaction.ts";
 import { Wallet } from "../domain/wallet/wallet.ts";
 import {
   InvalidWalletInputError,
-  OpeningBalanceNotAvailableError,
   UnsupportedWalletCurrencyError,
   WalletNotFoundError,
 } from "./wallet.errors.ts";
@@ -20,11 +29,6 @@ export class WalletUseCases {
 
   async create(input: unknown): Promise<WalletView> {
     const props = validateCreateWalletInput(input);
-    if (props.initialBalance.isPositive()) {
-      throw new OpeningBalanceNotAvailableError(
-        "Positive opening balance is not available yet",
-      );
-    }
     const at = new Date();
     const wallet = Wallet.open({
       id: randomUUID(),
@@ -32,7 +36,47 @@ export class WalletUseCases {
       initialBalance: props.initialBalance,
       at,
     });
-    await this.unitOfWork.execute((repository) => repository.create(wallet));
+    await this.unitOfWork.execute(async (repository) => {
+      await repository.create(wallet);
+      if (props.initialBalance.isZero()) return;
+      const opening = WagerTransaction.createOpening({
+        id: randomUUID(),
+        walletId: wallet.id,
+        playerId: wallet.playerId,
+        money: props.initialBalance,
+        at,
+      });
+      const entry = WalletLedgerEntry.create({
+        id: randomUUID(),
+        walletId: wallet.id,
+        transactionId: opening.id,
+        direction: LedgerDirection.Credit,
+        money: props.initialBalance,
+        balanceBefore: Money.zero(wallet.currency),
+        balanceAfter: wallet.balance,
+        createdAt: at,
+      });
+      opening.markProcessed(wallet.balance, at);
+      await repository.createTransaction(opening);
+      await repository.createLedgerEntry(entry);
+      const context = { correlationId: opening.id, occurredAt: at };
+      await repository.enqueue(
+        OutboxMessage.enqueue(
+          WagerTransactionProcessed.from(opening, {
+            ...context,
+            eventId: randomUUID(),
+          }),
+        ),
+      );
+      await repository.enqueue(
+        OutboxMessage.enqueue(
+          WalletBalanceChanged.from(wallet, entry, {
+            ...context,
+            eventId: randomUUID(),
+          }),
+        ),
+      );
+    });
     return toWalletView(wallet);
   }
 

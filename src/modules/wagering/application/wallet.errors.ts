@@ -17,7 +17,3 @@ export class InvalidWalletInputError extends Error {
 export class UnsupportedWalletCurrencyError extends Error {
   override name = "UnsupportedWalletCurrencyError";
 }
-
-export class OpeningBalanceNotAvailableError extends Error {
-  override name = "OpeningBalanceNotAvailableError";
-}
