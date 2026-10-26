@@ -24,13 +24,16 @@ src/
           outbox-message.ts
       application/
         ledger.use-cases.ts
+        reconciliation.use-cases.ts
         wallet-ports.ts
         wallet.errors.ts
         wallet.use-cases.ts
         transaction-input.ts
         transaction-ports.ts
         transaction.use-cases.ts
+      infrastructure/reconciliation.observer.ts
       infrastructure/persistence/
+        reconciliation.reader.ts
         wallet.schema.ts
         wallet.repository.ts
         wallet.unit-of-work.ts
@@ -44,6 +47,7 @@ src/
         migrations/migration-202610260007-rollback.ts
         migrations/migration-202610260008-ledger-pagination.ts
       presentation/
+        reconciliation-metrics.controller.ts
         wallet.controller.ts
         wallet-http-error.filter.ts
         transaction.controller.ts
@@ -68,6 +72,7 @@ tests/
     refund.test.ts
     rollback.test.ts
     ledger.test.ts
+    reconciliation.test.ts
   integration/
     auth.test.ts
     stack.test.ts
@@ -77,6 +82,7 @@ tests/
     refund.test.ts
     rollback.test.ts
     ledger.test.ts
+    reconciliation.test.ts
   support/
     run-tests.ts
     bet-database.ts
@@ -98,7 +104,7 @@ tests/
 | `src/modules/wagering/domain/transactions` | OPENING interna e BET/WIN/LOSS/REFUND/ROLLBACK externas, resultados, referências e reidratação |
 | `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
-| `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
+| `src/modules/wagering/presentation` | Endpoints HTTP de Wallet, transações e reconciliação, além de respostas de erro |
 | `tests/unit` | Testes de domínio sem infraestrutura |
 | `src/platform/health` | Liveness HTTP |
 | `src/platform/identity` | Extensão de autenticação HTTP sem verificação de identidade |
@@ -114,9 +120,11 @@ REFUND amplia a mesma entidade e o caso de uso; a consulta de compensações usa
 
 `application/ledger.use-cases.ts` concentra a porta de leitura, validação do cursor e caso de uso da consulta. O controller de Wallet expõe a rota; a unidade de trabalho de leitura usa o repositório de Wallet com consulta SQL por tupla e reidratação em lote. A migration de paginação adiciona somente o índice; os testes anteriores ajustam a sequência de reversão para preservar suas provas.
 
+`application/reconciliation.use-cases.ts` reúne a porta de snapshot, o caso de uso e a porta mínima de observação. `infrastructure/persistence/reconciliation.reader.ts` executa o SELECT único de diagnóstico; `infrastructure/reconciliation.observer.ts` emite JSON sem montantes e mantém os dois contadores locais. `presentation/reconciliation-metrics.controller.ts` expõe esses contadores em `/metrics`; o controller existente de Wallet recebe a reconciliação. Não há mudança de schema ou infraestrutura genérica de observabilidade. Os testes próprios de reconciliação ficam em `tests/unit` e `tests/integration`.
+
 ## Organização por funcionalidade
 
-A organização por funcionalidade foi aceita em [arquitetura](architecture.md). O desenho abaixo inclui `Money`, `wallet` e `ledger`, já implementados em memória; as demais partes financeiras continuam propostas. Criar cada pasta conforme a necessidade concreta:
+A organização por funcionalidade foi aceita em [arquitetura](architecture.md). `Money`, `wallet` e `ledger` estão implementados e persistidos; o fluxo SQS, inbox e workers continua proposto. Criar cada pasta conforme a necessidade concreta:
 
 ```text
 src/
@@ -166,6 +174,6 @@ Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de dom�
 | [Arquitetura](architecture.md) | Decisões, alternativas e consequências |
 | [Convenções](conventions.md) | Regras de escrita e manutenção do código |
 | [Testes](testing.md) | Estratégia, evidências e limitações |
-| [Spec financeira](specs/fluxo-financeiro-persistente.md) | Escopo de integração, critérios de teste e políticas pendentes; implementação não autorizada pela publicação |
+| [Spec financeira](specs/fluxo-financeiro-persistente.md) | Escopo entregue, critérios de teste, evidências e limites da continuidade |
 
 Documentos usam nomes minúsculos; `README.md` e `AGENTS.md` mantêm seus nomes convencionais na raiz. `AGENTS.md` e `docs/agents/` são versionados. O roadmap e a pesquisa são apoio local excluído em `.git/info/exclude`; `.scratch/` é local e está no `.gitignore`.

@@ -12,7 +12,7 @@ Ambiente validado: Windows, Bun 1.4.4, PostgreSQL 18.6 em Docker, NestJS 12.2.0 
 | --- | --- |
 | `bun run typecheck` | Tipos estritos sem erros |
 | `bun run lint` | Biome sem erros ou avisos |
-| `bun run test` | 209 testes passaram, zero falhas, 1959 asserções |
+| `bun run test` | 220 testes passaram, zero falhas, 2038 asserções |
 | `git diff --check` | Sem erros de whitespace |
 
 `bun run test` usa `tests/support/run-tests.ts`: a conexão administrativa deriva a URL configurada e troca o banco por `/postgres`, sem conectar ao banco de desenvolvimento. Um banco `suite_validation_<uuid>` recebe a execução completa, inclusive testes de autenticação e bootstrap, por variável `DATABASE_URL` explícita no subprocesso. As suítes técnicas e financeiras criam bancos adicionais `stack_validation_<uuid>`, `wallet_validation_<uuid>` e `bet_validation_<uuid>`, com observadores independentes. Prefixo gerado e `current_database()` precisam coincidir antes de migrar e limpar. A CLI financeira recebe também nome esperado e URL explícita; nome divergente é recusado antes da migration. Sem alvo confirmado, não se autoriza limpeza. Logs de teste mostram apenas nomes dos bancos, sem URLs ou credenciais.
@@ -124,8 +124,25 @@ FAILED permanece inalcançável. OPENING não tem identidade externa para lookup
 
 As fixtures SQL de ordenação mantêm FKs, identidade externa, aritmética exata e saldo reconstruído; inserem timestamps diretamente para preservar microssegundos. Essas fixtures não comprovam gravação da outbox; as intenções persistidas são exercitadas pelos casos de uso reais nas demais suítes. Publicação continua pendente. `createdAt` da resposta usa milissegundos; a ordenação SQL preserva microssegundos independentemente dessa apresentação.
 
+### Reconciliação
+
+`tests/unit/reconciliation.test.ts` verifica UUID e normalização, ausência versus infraestrutura, formatação diagnóstica exata inclusive além da precisão de number, sinais e diferença armazenado menos calculado. Somente contagens inteiras não negativas até `Number.MAX_SAFE_INTEGER` passam para number; contagens fora do intervalo são recusadas sem arredondamento. O adaptador de observação seleciona somente os metadados autorizados mesmo quando recebe um objeto com campos financeiros extras.
+
+`tests/integration/reconciliation.test.ts` usa o caso de uso e PostgreSQL reais no harness `bet_validation_<uuid>`, com administração por `/postgres`, URL explícita e alvo confirmado antes de migrations e limpeza:
+
+- Carteira sem lançamentos retorna calculado zero e contagem zero. Aberturas de `0.01`, `25.37` e `1000000.00` reconstroem exatamente o saldo. Histórico real de OPENING, BET, WIN, LOSS, REFUND e ROLLBACK permanece consistente; rejeição e pendência não entram na contagem do ledger.
+- SQL deliberado em banco descartável altera somente saldo de Wallet ou insere transações/lançamentos com checks, FKs e aritmética local válidos, mas histórico global inconsistente. O schema não garante correspondência global de SQL manual. Reconciliação exibe calculado `-0.01`, diferença `1000000.01`, calculado `1000000.01` e diferença `-1000000.01`, sem passar pelo teto de Money nem rejeitar o diagnóstico. Não se desabilitam constraints ou triggers do ledger.
+- Snapshot integral de Wallet, transações, ledger e outbox é igual antes/depois das leituras consistentes e divergentes. Não existe mutação corretiva. Uma consulta SQL inválida real produz `42703` e propaga, sem fabricar ausência ou contar divergência.
+- A prova de concorrência instrumenta somente o execute do teste: acrescenta CTE MATERIALIZED com advisory lock ao SELECT real de reconciliação. Outra conexão segura o lock; `pg_stat_activity` confirma a consulta bloqueada dentro do comando antes de uma BET real confirmar Wallet e ledger. A BET conclui sem esperar pela leitura; após liberar a barreira, o SELECT retorna ambos os saldos anteriores e contagem anterior, consistentes. A próxima reconciliação retorna ambos os saldos novos e contagem nova. O polling somente observa o estado real do PostgreSQL; a ordem não depende de um sleep presumido ou de Promise.all. Não há hook, advisory lock ou FOR UPDATE no leitor de produção.
+- HTTP verifica `200`, shape completo, dinheiro em strings e diferença assinada, `400 INVALID_WALLET_INPUT` e `404 WALLET_NOT_FOUND`. Falhas controladas na fronteira HTTP exercitam o filtro existente com `503 DATABASE_UNAVAILABLE` e `500 INTERNAL_ERROR`, sem detalhes internos; isso complementa a falha SQL real do caso de uso, sem alegar teste de queda de rede.
+- Divergência provocada aparece em JSON capturado e resposta. O UUID de correlação é gerado pelo controller mesmo com header externo divergente. A linha contém somente evento, Wallet, correlação, resultado e contagem, sem montantes. `GET /metrics` expõe HELP/TYPE e contadores reais que passam de zero a um por resultado, em texto Prometheus; erros não aumentam os contadores. Não há rótulos de alta cardinalidade. Uma nova instância do observer começa em zero.
+
+Os contadores são locais ao processo/instância da aplicação e não persistem entre reinícios. As provas não cobrem total distribuído, coleta por servidor Prometheus, desempenho de históricos grandes ou observabilidade completa da seção 12. Nenhuma migration ou dependência nova foi necessária; as garantias anteriores continuam exercitadas pela suíte completa.
+
+Validação da preparação final: `bun run typecheck`, `bun run lint`, `bun run test` e `git diff --check` aprovados. A suíte completa terminou com 220 testes, zero falhas e 2038 asserções em Windows/Bun 1.4.4/PostgreSQL real. Esta evidência não demonstra processamento SQS, publicação da outbox, recuperação após crash nem readiness de dependências.
+
 ## Limites e continuidade
 
-Ainda não foram demonstrados: worker de referências, reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
+Ainda não foram demonstrados: worker de referências, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness e métricas/logs operacionais completos permanecem pendentes; a sinalização mínima da reconciliação está demonstrada acima.
 
 Para os próximos tickets, preservar as evidências de BET e ampliar os cenários com referências fora de ordem, reversões e recuperação. Em cada cenário financeiro, conferir saldo reconstruído pelo ledger e ausência de efeitos extras. Mocks não substituem PostgreSQL ou SQS reais. Indisponibilidade de infraestrutura deve ser informada como cenário não verificado.

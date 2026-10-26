@@ -28,4 +28,4 @@ As versões efetivamente instaladas são definidas por [package.json](../package
 - Bun executa código e testes. A verificação estrita de tipos usa `tsc --noEmit`, separadamente do runtime.
 - PostgreSQL usa a imagem `postgres:18.6-bookworm`. Docker Engine 29.9.2 e Compose 5.6.1 estavam disponíveis no ensaio. Node 24.13 estava instalado, mas não executou a aplicação ou os testes.
 
-O ensaio validou HTTP, conexão, migrations reversíveis, commit, rollback, uma constraint e transporte decimal. O mapeamento financeiro definitivo, precisão de `Money`, concorrência e integração SQS continuam pendentes. MiniStack está em execução local, mas FIFO e DLQ ainda não foram verificados pela suíte. Ver [evidências](testing.md).
+O ensaio inicial validou HTTP, conexão, migrations reversíveis, commit, rollback, uma constraint e transporte decimal. Os tickets seguintes ampliaram essa cobertura: persistência monetária exata, operações financeiras, concorrência entre processos e reconciliação estão evidenciadas em [testes](testing.md). A integração SQS continua pendente; MiniStack está no Compose, mas consumo, publicação, FIFO e DLQ não foram verificados pela suíte.

@@ -1,6 +1,6 @@
 # Fluxo financeiro persistente
 
-Estado: execução incremental. Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK compõem a base `820ccab`. Somente o ticket 07 (ledger paginado) está implementado para revisão independente; 08 não foi iniciado.
+Estado: execução incremental. Wallet, abertura auditável, BET/WIN/LOSS/REFUND/ROLLBACK e ledger paginado compõem a base `0411cd5`. O ticket 08 (reconciliação) está implementado e revisado. Esta entrega continua parcial; os blocos de mensageria descritos como continuidade permanecem pendentes.
 
 WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas confirmadas, alternativas e limites estão em [arquitetura](../architecture.md#win-loss-e-referências-opcionais). Persistir PENDING_REFERENCE não implementa o worker de reprocessamento.
 
@@ -8,7 +8,7 @@ WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas
 
 Os provedores precisam submeter operações financeiras sem cobrar uma aposta duas vezes, perder créditos ou produzir saldo negativo quando houver reenvios, falhas e processamento concorrente. O operador precisa consultar um resultado auditável e conferir o saldo contra o ledger.
 
-Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK. Ledger paginado está implementado para revisão; reconciliação permanece pendente. Evidências reais estão em [testes](../testing.md). Reversões integrais seguem as políticas aceitas de [REFUND](../architecture.md#refund-integral) e [ROLLBACK](../architecture.md#rollback-integral).
+Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK. Ledger paginado e reconciliação também estão implementados. Evidências reais e seus limites estão em [testes](../testing.md). Reversões integrais seguem as políticas aceitas de [REFUND](../architecture.md#refund-integral) e [ROLLBACK](../architecture.md#rollback-integral).
 
 ## Solução
 
@@ -124,7 +124,7 @@ Fronteira principal confirmada: caso de uso financeiro real com PostgreSQL real 
 - Provar que Wallets diferentes avançam sem lock global e executar disputas com pelo menos três processos reais. Promises em um único processo não demonstram esse requisito.
 - Verificar compensação integral, referências incompatíveis, referência ainda pendente/rejeitada e reversões concorrentes conforme decisões fechadas antes dos tickets correspondentes.
 - No HTTP, testar ligação com o caso de uso, validação runtime, header obrigatório, moeda BRL e distinção entre categorias de resposta; usar aplicação e PostgreSQL reais.
-- Reconciliar sob concorrência usando visão consistente a definir; sinalizar divergência provocada sem corrigi-la. Conferir saldo contra ledger em todos os cenários financeiros.
+- Reconciliar sob concorrência em um único SELECT com snapshot MVCC; barreira somente de teste comprova commit financeiro durante a consulta. Sinalizar divergência provocada em resposta, JSON sem montantes e contador Prometheus, sem corrigi-la. Conferir saldo contra ledger em todos os cenários financeiros.
 - Executar typecheck, lint e testes pertinentes por entrega; registrar ambiente, comandos, falhas e limites. Antes de concluir o fluxo, executar a suíte completa.
 
 ## Fora do escopo
@@ -154,7 +154,7 @@ As escolhas abaixo precisam ser resolvidas antes do ticket que depende delas. N�
 | Identificadores e metadados internos de OPENING — resolvido | UUID interno, origem INTERNAL e campos externos ausentes; unicidades externas não usam sentinelas |
 | Evolução posterior de PENDING_REFERENCE | Snapshot persistido e replay sem reprocessar estão implementados; worker, TTL e backoff permanecem pendentes |
 | Ledger paginado — resolvido | Keyset `created_at DESC, id DESC`; cursor v1 base64url vinculado à Wallet e âncora SQL imutável, sem snapshot; limite decimal estrito padrão 50, entre 1 e 100. Contrato e custos em [arquitetura](../architecture.md#ledger-paginado) |
-| Snapshot da reconciliação e valores reconstruídos fora do teto | Consistência da reconciliação e exatidão mesmo ao detectar corrupção |
+| Reconciliação — resolvido | Um SELECT parametrizado agrega Wallet e ledger no mesmo snapshot, sem lock financeiro. Diagnóstico usa bigint e strings assinadas de duas casas sem teto de Money; diferença é armazenado menos calculado. JSON de divergência sem montantes e dois contadores locais em GET /metrics; detalhes e custos em [arquitetura](../architecture.md#reconciliação) |
 | Destino e políticas dos futuros workers | Publicação, reprocessamento e recuperação são obrigatórios na continuidade |
 
 ### Ordem de decomposição
