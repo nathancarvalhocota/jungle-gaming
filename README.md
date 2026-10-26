@@ -65,52 +65,20 @@ Use `bun run test` para a suíte completa. O runner administra bancos descartáv
 
 Dinheiro usa strings decimais com duas casas e BRL. POST de operação retorna 201 quando processada, 200 no replay idempotente, 202 para referência pendente e 422 para rejeição financeira. Uma chave de idempotência com payload diferente retorna 409. A autenticação real está fora do escopo por decisão aceita; a extensão `NoAuthGuard` não autentica o chamador.
 
-## Demonstração rápida
+## Testes manuais pelo Postman
 
-Com a API em execução, este exemplo PowerShell cria uma Wallet de BRL 25,37, envia uma BET de BRL 10, repete a mesma requisição, provoca conflito de payload, devolve a BET por REFUND, consulta o ledger e reconcilia a Wallet:
+Com a API em execução em `http://127.0.0.1:3000`, importe as collections incluídas no repositório:
 
-```powershell
-$base = "http://127.0.0.1:3000"
-$walletBody = @{ playerId = "player-demo"; initialBalance = @{ amount = "25.37"; currency = "BRL" } } | ConvertTo-Json -Compress
-$wallet = Invoke-RestMethod -Method Post -Uri "$base/wallets" -ContentType "application/json" -Body $walletBody
+- [Fluxos funcionais básicos](postman/jungle-gaming.postman_collection.json): abertura e consulta de Wallet, operações financeiras, replay idempotente, conflitos, ledger e reconciliação.
+- [Validações críticas concorrentes](postman/jungle-gaming-critical.postman_collection.json): dez BETs idênticas com a mesma chave e disputa concorrente de saldo por duas BETs.
 
-$betBody = @{
-  providerId = "provider-demo"; externalTransactionId = "bet-demo"
-  playerId = "player-demo"; walletId = $wallet.id
-  roundId = "round-demo"; gameId = "game-demo"; kind = "BET"
-  money = @{ amount = "10.00"; currency = "BRL" }
-} | ConvertTo-Json -Compress
-$headers = @{ "Idempotency-Key" = "demo-bet-key" }
-$bet = Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $betBody
-$replay = Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $betBody
-$replay.idempotentReplay
+A variável `baseUrl` já aponta para `http://127.0.0.1:3000`. Se a API estiver em outra porta ou endereço, altere essa variável na collection antes de executar.
 
-$changedBet = @{
-  providerId = "provider-demo"; externalTransactionId = "bet-demo"
-  playerId = "player-demo"; walletId = $wallet.id
-  roundId = "round-demo"; gameId = "game-demo"; kind = "BET"
-  money = @{ amount = "11.00"; currency = "BRL" }
-} | ConvertTo-Json -Compress
-try {
-  Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $changedBet
-} catch {
-  [int]$_.Exception.Response.StatusCode
-}
+Na collection básica, envie as requisições em sequência, respeitando a ordem e os dados produzidos pelos passos anteriores. Você pode usar **Send** uma requisição por vez; confira o status HTTP e o corpo de cada resposta.
 
-$refundBody = @{
-  providerId = "provider-demo"; externalTransactionId = "refund-demo"
-  playerId = "player-demo"; walletId = $wallet.id
-  roundId = "round-demo"; gameId = "game-demo"; kind = "REFUND"
-  referenceExternalTransactionId = "bet-demo"
-  money = @{ amount = "10.00"; currency = "BRL" }
-} | ConvertTo-Json -Compress
-$refundHeaders = @{ "Idempotency-Key" = "demo-refund-key" }
-Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $refundHeaders -ContentType "application/json" -Body $refundBody
-Invoke-RestMethod -Method Get -Uri "$base/wallets/$($wallet.id)/ledger"
-Invoke-RestMethod -Method Post -Uri "$base/wallets/$($wallet.id)/reconciliation"
-```
+Na collection crítica, use o **Collection Runner**, uma pasta por execução, com **1 iteração** e **0 ms de delay**. Execute os três itens da pasta em ordem. O primeiro cria uma Wallet isolada; no segundo, um script dispara as requisições em paralelo para `POST /wagering/transactions` e pula o POST visível para não criar uma operação extra; o terceiro verifica as respostas, o saldo e a reconciliação. O item de disparo pode aparecer como pulado no Runner — isso é esperado. As verificações do cenário aparecem no terceiro item.
 
-O resultado de replay deve indicar `idempotentReplay = true`; o conflito é HTTP 409. Cada execução cria registros novos, então use um `playerId` distinto ao repetir o exemplo.
+As collections exercitam os comportamentos observáveis pela API. Elas não substituem a suíte automatizada com PostgreSQL, não testam diretamente todas as constraints e triggers do banco e não demonstram processamento SQS.
 
 ## Limitações conhecidas
 

@@ -1,0 +1,300 @@
+{
+  "info": {
+    "name": "Jungle Gaming - Validacoes Criticas",
+    "description": "Probes HTTP concorrentes. Rode os pedidos de cada pasta na ordem com Collection Runner. Use o Postman Desktop apontando para a API local. Cada execucao cria carteiras e identificadores unicos. Isso testa o comportamento concorrente observavel pela API; nao substitui testes diretos de constraints/triggers nem a validacao automatizada com PostgreSQL e multiplos processos.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3000"
+    },
+    {
+      "key": "duplicateRunId",
+      "value": ""
+    },
+    {
+      "key": "duplicateWalletId",
+      "value": ""
+    },
+    {
+      "key": "fundsRunId",
+      "value": ""
+    },
+    {
+      "key": "fundsWalletId",
+      "value": ""
+    },
+    {
+      "key": "duplicateRaceResponses",
+      "value": ""
+    },
+    {
+      "key": "fundsRaceResponses",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Idempotencia persistente sob concorrencia",
+      "description": "Envia dez copias simultaneas da mesma BET, chave e payload; confere um efeito e nove replays. Execute os três itens em ordem no Collection Runner.",
+      "item": [
+        {
+          "name": "01 - Criar Wallet isolada com saldo 100",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"postman-idem-race-{{duplicateRunId}}\",\n  \"initialBalance\": {\n    \"amount\": \"100.00\",\n    \"currency\": \"BRL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/wallets",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = pm.variables.replaceIn(\"{{$guid}}\");",
+                  "pm.collectionVariables.set(\"duplicateRunId\", runId);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"wallet created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"duplicateWalletId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 - Disparar dez BETs identicas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-idem-race-{{duplicateRunId}}"
+              }
+            ],
+            "url": "{{baseUrl}}/wagering/transactions",
+            "description": "Execute pelo Collection Runner. O pre-request script dispara a quantidade indicada em paralelo via POST /wagering/transactions e pula este POST de exibicao para nao criar uma requisicao extra.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerId\": \"postman-concurrency\",\n  \"externalTransactionId\": \"same-bet-{{duplicateRunId}}\",\n  \"playerId\": \"postman-idem-race-{{duplicateRunId}}\",\n  \"walletId\": \"{{duplicateWalletId}}\",\n  \"roundId\": \"postman-race\",\n  \"gameId\": \"postman-race\",\n  \"kind\": \"BET\",\n  \"money\": {\n    \"amount\": \"1.00\",\n    \"currency\": \"BRL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.collectionVariables.get(\"baseUrl\");",
+                  "const runId = pm.collectionVariables.get(\"duplicateRunId\");",
+                  "const walletId = pm.collectionVariables.get(\"duplicateWalletId\");",
+                  "const requests = Array.from({ length: 10 }, () => pm.sendRequest({",
+                  "  url: baseUrl + \"/wagering/transactions\", method: \"POST\",",
+                  "  header: { \"Content-Type\": \"application/json\", \"Idempotency-Key\": \"postman-idem-race-\" + runId },",
+                  "  body: { mode: \"raw\", raw: JSON.stringify({ providerId: \"postman-concurrency\", externalTransactionId: \"same-bet-\" + runId, playerId: \"postman-idem-race-\" + runId, walletId, roundId: \"postman-race\", gameId: \"postman-race\", kind: \"BET\", money: { amount: \"1.00\", currency: \"BRL\" } }) }",
+                  "}));",
+                  "const responses = await Promise.all(requests);",
+                  "const serialized = responses.map((response) => ({ code: response.code, body: response.json() }));",
+                  "pm.collectionVariables.set(\"duplicateRaceResponses\", JSON.stringify(serialized));",
+                  "// The visible POST is skipped so the script sends exactly the requested number of concurrent BETs.",
+                  "pm.execution.skipRequest();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 - Conferir saldo e reconciliacao apos as dez BETs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/wallets/{{duplicateWalletId}}",
+            "description": "Lê a Wallet e valida as respostas salvas pelo item anterior; também consulta a reconciliação."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const responses = JSON.parse(pm.collectionVariables.get(\"duplicateRaceResponses\"));",
+                  "const results = responses.map((entry) => entry.body);",
+                  "const walletId = pm.collectionVariables.get(\"duplicateWalletId\");",
+                  "const baseUrl = pm.collectionVariables.get(\"baseUrl\");",
+                  "const reconciliationResponse = await pm.sendRequest({ url: baseUrl + \"/wallets/\" + walletId + \"/reconciliation\", method: \"POST\" });",
+                  "const reconciliation = reconciliationResponse.json();",
+                  "const wallet = pm.response.json();",
+                  "pm.test(\"10 identical concurrent BETs: one process and nine replays\", function () { pm.expect(responses.filter((x) => x.code === 201)).to.have.length(1); pm.expect(responses.filter((x) => x.code === 200)).to.have.length(9); pm.expect(results.filter((x) => x.idempotentReplay === false)).to.have.length(1); pm.expect(results.filter((x) => x.idempotentReplay === true)).to.have.length(9); pm.expect(new Set(results.map((x) => x.transactionId)).size).to.eql(1); pm.expect(results.every((x) => x.balance.amount === \"99.00\")).to.eql(true); });",
+                  "pm.test(\"one debit persisted and reconciles\", function () { pm.expect(wallet.balance.amount).to.eql(\"99.00\"); pm.expect(reconciliation.consistent).to.eql(true); pm.expect(reconciliation.calculatedBalance.amount).to.eql(\"99.00\"); pm.expect(reconciliation.checkedEntries).to.eql(2); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Concorrencia de saldo por Wallet",
+      "description": "Disputa saldo 100 com duas BETs independentes de 80; deve haver uma aprovada, uma rejeitada e saldo final 20. Execute os três itens em ordem no Collection Runner.",
+      "item": [
+        {
+          "name": "01 - Criar Wallet isolada com saldo 100",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playerId\": \"postman-funds-race-{{fundsRunId}}\",\n  \"initialBalance\": {\n    \"amount\": \"100.00\",\n    \"currency\": \"BRL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/wallets",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = pm.variables.replaceIn(\"{{$guid}}\");",
+                  "pm.collectionVariables.set(\"fundsRunId\", runId);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"wallet created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"fundsWalletId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 - Disparar duas BETs simultaneas de 80",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "funds-race-a-{{fundsRunId}}"
+              }
+            ],
+            "url": "{{baseUrl}}/wagering/transactions",
+            "description": "Execute pelo Collection Runner. O pre-request script dispara a quantidade indicada em paralelo via POST /wagering/transactions e pula este POST de exibicao para nao criar uma requisicao extra.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerId\": \"postman-concurrency\",\n  \"externalTransactionId\": \"balance-race-a-{{fundsRunId}}\",\n  \"playerId\": \"postman-funds-race-{{fundsRunId}}\",\n  \"walletId\": \"{{fundsWalletId}}\",\n  \"roundId\": \"postman-race\",\n  \"gameId\": \"postman-race\",\n  \"kind\": \"BET\",\n  \"money\": {\n    \"amount\": \"80.00\",\n    \"currency\": \"BRL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.collectionVariables.get(\"baseUrl\");",
+                  "const runId = pm.collectionVariables.get(\"fundsRunId\");",
+                  "const walletId = pm.collectionVariables.get(\"fundsWalletId\");",
+                  "const requests = [\"a\", \"b\"].map((suffix) => pm.sendRequest({",
+                  "  url: baseUrl + \"/wagering/transactions\", method: \"POST\",",
+                  "  header: { \"Content-Type\": \"application/json\", \"Idempotency-Key\": \"funds-race-\" + suffix + \"-\" + runId },",
+                  "  body: { mode: \"raw\", raw: JSON.stringify({ providerId: \"postman-concurrency\", externalTransactionId: \"balance-race-\" + suffix + \"-\" + runId, playerId: \"postman-funds-race-\" + runId, walletId, roundId: \"postman-race\", gameId: \"postman-race\", kind: \"BET\", money: { amount: \"80.00\", currency: \"BRL\" } }) }",
+                  "}));",
+                  "const responses = await Promise.all(requests);",
+                  "const serialized = responses.map((response) => ({ code: response.code, body: response.json() }));",
+                  "pm.collectionVariables.set(\"fundsRaceResponses\", JSON.stringify(serialized));",
+                  "// The visible POST is skipped so the script sends exactly the requested number of concurrent BETs.",
+                  "pm.execution.skipRequest();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 - Conferir saldo e reconciliacao apos a disputa",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/wallets/{{fundsWalletId}}",
+            "description": "Lê a Wallet e valida as respostas salvas pelo item anterior; também consulta a reconciliação."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const responses = JSON.parse(pm.collectionVariables.get(\"fundsRaceResponses\"));",
+                  "const results = responses.map((entry) => entry.body);",
+                  "const walletId = pm.collectionVariables.get(\"fundsWalletId\");",
+                  "const baseUrl = pm.collectionVariables.get(\"baseUrl\");",
+                  "const reconciliationResponse = await pm.sendRequest({ url: baseUrl + \"/wallets/\" + walletId + \"/reconciliation\", method: \"POST\" });",
+                  "const reconciliation = reconciliationResponse.json();",
+                  "const wallet = pm.response.json();",
+                  "pm.test(\"two concurrent BETs of 80: one success and one insufficient funds\", function () { pm.expect(responses.map((x) => x.code).sort()).to.eql([201, 422]); pm.expect(results.filter((x) => x.status === \"PROCESSED\")).to.have.length(1); pm.expect(results.filter((x) => x.status === \"REJECTED\" && x.failureCode === \"INSUFFICIENT_FUNDS\")).to.have.length(1); });",
+                  "pm.test(\"wallet stays nonnegative and reconciles\", function () { pm.expect(wallet.balance.amount).to.eql(\"20.00\"); pm.expect(reconciliation.consistent).to.eql(true); pm.expect(reconciliation.calculatedBalance.amount).to.eql(\"20.00\"); pm.expect(reconciliation.checkedEntries).to.eql(2); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
