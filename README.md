@@ -16,6 +16,8 @@ REFUND positiva exige referência externa e devolve integralmente uma BET proces
 
 ROLLBACK positiva exige referência a BET, WIN ou REFUND processada do mesmo contexto e valor integral. Reverte BET com crédito e WIN/REFUND com débito; débito sem saldo é rejeitado com `REVERSAL_INSUFFICIENT_FUNDS`. Compensar uma REFUND não reabre a BET original. Referências ausentes ou ainda pendentes conservam HTTP 202 e snapshot sem movimentação. As garantias e limitações estão em [arquitetura](docs/architecture.md#rollback-integral) e [testes](docs/testing.md#rollback-integral-persistente).
 
+`GET /wallets/:walletId/ledger?limit=50&cursor=...` consulta o histórico em ordem `created_at DESC, id DESC`. Retorna `{ items, nextCursor }`, com identificadores, direção, dinheiro exato em strings, saldos anterior/posterior e data. O limite padrão é 50, entre 1 e 100; o cursor opaco é vinculado à Wallet. Não há snapshot entre requisições: movimentos mais recentes exigem reiniciar a consulta. Contrato, erros e limites estão em [arquitetura](docs/architecture.md#ledger-paginado).
+
 ## Stack exigida
 
 - Bun 1.x como runtime, gerenciador de pacotes e executor de testes.

@@ -16,6 +16,7 @@ import { Wallet } from "../../domain/wallet/wallet.ts";
 import {
   OutboxMessageSchema,
   WagerTransactionSchema,
+  type WalletLedgerEntryRecord,
   WalletLedgerEntrySchema,
 } from "./opening.schema.ts";
 import { type WalletRecord, WalletSchema } from "./wallet.schema.ts";
@@ -157,20 +158,41 @@ export class WalletRepository {
   async findLedgerEntry(id: string): Promise<WalletLedgerEntry | undefined> {
     const record = await this.em.findOne(WalletLedgerEntrySchema, { id });
     if (!record) return undefined;
-    if (
-      record.direction !== LedgerDirection.Credit &&
-      record.direction !== LedgerDirection.Debit
-    )
-      throw new Error("Invalid stored ledger direction");
-    return WalletLedgerEntry.rehydrate({
-      id: record.id,
-      walletId: record.walletId,
-      transactionId: record.transactionId,
-      direction: record.direction,
-      money: readMoney(record.moneyMinorUnits, record.currency),
-      balanceBefore: readMoney(record.balanceBeforeMinorUnits, record.currency),
-      balanceAfter: readMoney(record.balanceAfterMinorUnits, record.currency),
-      createdAt: record.createdAt,
+    return toLedgerDomain(record);
+  }
+
+  async listLedgerEntries(
+    walletId: string,
+    limit: number,
+    entryId?: string,
+  ): Promise<WalletLedgerEntry[] | undefined> {
+    if (entryId) {
+      const anchors = await this.em.execute<{ id: string }[]>(
+        "select id from wallet_ledger_entries where wallet_id = ? and id = ?",
+        [walletId, entryId],
+      );
+      if (anchors.length === 0) return undefined;
+    }
+    const rows = await this.em.execute<{ id: string }[]>(
+      `select entry.id from wallet_ledger_entries entry
+       where entry.wallet_id = ? ${
+         entryId
+           ? `and (entry.created_at, entry.id) < (
+         select anchor.created_at, anchor.id from wallet_ledger_entries anchor
+         where anchor.wallet_id = ? and anchor.id = ?)`
+           : ""
+       }
+       order by entry.created_at desc, entry.id desc limit ?`,
+      entryId ? [walletId, walletId, entryId, limit] : [walletId, limit],
+    );
+    const records = await this.em.find(WalletLedgerEntrySchema, {
+      id: { $in: rows.map((row) => row.id) },
+    });
+    const byId = new Map(records.map((record) => [record.id, record]));
+    return rows.map((row) => {
+      const record = byId.get(row.id);
+      if (!record) throw new Error("Stored ledger entry disappeared");
+      return toLedgerDomain(record);
     });
   }
 
@@ -240,4 +262,22 @@ function isWalletUniqueViolation(error: unknown): boolean {
     return true;
   }
   return "cause" in record && isWalletUniqueViolation(record.cause);
+}
+
+function toLedgerDomain(record: WalletLedgerEntryRecord): WalletLedgerEntry {
+  if (
+    record.direction !== LedgerDirection.Credit &&
+    record.direction !== LedgerDirection.Debit
+  )
+    throw new Error("Invalid stored ledger direction");
+  return WalletLedgerEntry.rehydrate({
+    id: record.id,
+    walletId: record.walletId,
+    transactionId: record.transactionId,
+    direction: record.direction,
+    money: readMoney(record.moneyMinorUnits, record.currency),
+    balanceBefore: readMoney(record.balanceBeforeMinorUnits, record.currency),
+    balanceAfter: readMoney(record.balanceAfterMinorUnits, record.currency),
+    createdAt: record.createdAt,
+  });
 }

@@ -5,6 +5,7 @@ import {
   Inject,
 } from "@nestjs/common";
 import { BaseExceptionFilter, HttpAdapterHost } from "@nestjs/core";
+import { InvalidLedgerQueryError } from "../application/ledger.use-cases.ts";
 import { TransactionApplicationError } from "../application/transaction-input.ts";
 import {
   InvalidWalletInputError,
@@ -65,6 +66,13 @@ function mapWalletError(error: unknown): {
   code: string;
   message: string;
 } {
+  if (error instanceof InvalidLedgerQueryError) {
+    return {
+      statusCode: 400,
+      code: "INVALID_LEDGER_QUERY",
+      message: "Ledger query is invalid",
+    };
+  }
   if (
     error instanceof InvalidWalletInputError ||
     error instanceof HttpException

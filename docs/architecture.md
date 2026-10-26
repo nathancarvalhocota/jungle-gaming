@@ -136,6 +136,18 @@ A compensação direta única entre REFUND/ROLLBACK continua protegida pelo índ
 
 Wallet continua sendo bloqueada antes de claim/referência e de decisões de saldo, sob READ COMMITTED, com lock_timeout de 5s e statement_timeout de 15s. Não há lock adicional de referência. A defesa 23505 com nome exato do índice continua respondendo 503 somente após rollback completo, sem retry interno. A migration incremental `Migration202610260007Rollback` amplia checks de identidade, referência e estados/códigos, preserva o índice compartilhado e restaura os checks de REFUND no down. Down com ROLLBACK existente falha atomicamente, conservando dados e migration aplicada. O schema verifica estrutura, ranges, FK e unicidade; elegibilidade completa entre linhas e correspondência global saldo/ledger continuam coordenadas pelo domínio e caso de uso, sem garantia adicional para SQL manual arbitrário.
 
+## Ledger paginado
+
+`GET /wallets/:walletId/ledger` usa `LedgerUseCases` e uma porta de leitura com o repositório e a unidade de trabalho existentes. Não movimenta saldo nem grava transações, ledger ou eventos. Retorna `{ items, nextCursor }`; cada item contém `id`, `walletId`, `transactionId`, `direction`, `money`, `balanceBefore`, `balanceAfter` e `createdAt`. Dinheiro mantém strings exatas com duas casas. A data da resposta usa ISO UTC com milissegundos, conforme `Date`; isso não determina a precisão da paginação.
+
+A ordem aceita é `created_at DESC, id DESC`, com keyset exclusivo, sem OFFSET. Alternativa: offset, que desloca posições quando chegam novos lançamentos. O cursor é JSON UTF-8 `{ v: 1, walletId, entryId }` em base64url canônico sem padding. Versão, chaves exatas, UUIDs e vínculo à Wallet são validados; UUIDs aceitam maiúsculas e são normalizados para minúsculas. Cursor é opaco como contrato de navegação, sem segredo, assinatura ou garantia de autenticidade. Um cursor construído com uma âncora existente da própria Wallet é aceito. Autenticação continua fora do escopo.
+
+A âncora imutável é resolvida no PostgreSQL por Wallet e ID. SQL parametrizado compara `(created_at, id)` com a tupla real da âncora, preservando microssegundos; não reconstrói o timestamp de comparação por `Date`. Busca `limit + 1`, carrega registros em lote e reidrata pelo mapper existente. Só retorna cursor quando existe item adicional, ancorado no último item efetivamente retornado. A migration incremental reversível `Migration202610260008LedgerPagination` acrescenta o índice `(wallet_id, created_at, id)`, compatível com varredura inversa. Não se exige que o planejador escolha índice em tabelas pequenas.
+
+Somente `limit` e `cursor` são aceitos na query. `limit` é string decimal inteira estrita de `1` a `100`, padrão `50`, sem espaços, sinal, zeros iniciais, fração ou notação exponencial. Tipos runtime diferentes de string, arrays e campos desconhecidos são recusados. Cursor vazio, malformado, UTF-8 inválido, versão/shape inválidos, de outra Wallet ou com âncora inexistente retorna `400 INVALID_LEDGER_QUERY`, assim como limite inválido. ID de Wallet inválido retorna `400 INVALID_WALLET_INPUT`; Wallet ausente, `404 WALLET_NOT_FOUND`; Wallet vazia, `200` com `items: []` e `nextCursor: null`.
+
+Não existe snapshot entre requisições. Lançamentos novos mais recentes que a âncora não aparecem na continuação e exigem reiniciar. Um commit tardio com tupla abaixo da âncora pode aparecer na próxima página; se a tupla já ficou acima da janela percorrida, pode ficar fora dessa navegação. A ausência de duplicações/perdas para um conjunto fixo decorre da ordem total e do ledger imutável, não de uma visão histórica congelada. Alternativa: manter snapshot entre páginas, com estado e ciclo de vida adicionais, não adotada. Reconciliação, filtros e exportação não fazem parte desta entrega.
+
 ## Pendências e propostas
 
 - **Money:** saldo não negativo já percorre string/`bigint` PostgreSQL/string pelo repositório, com aplicação de Wallet restrita a BRL. Reconstrução de valores internos com sinal e regras das demais operações continuam pendentes.
@@ -143,7 +155,7 @@ Wallet continua sendo bloqueada antes de claim/referência e de decisões de sal
 - **Schema:** unicidade, não negatividade e teto de Wallet estão implementados; ledger imutável, OPENING, REFUND, ROLLBACK e outbox possuem schema e constraints. Inbox continua pendente. As evidências atuais não equivalem à seção 5.9 completa.
 - **Contratos e regras:** FAILED permanece inalcançável; demais contratos entregues estão definidos acima.
 - **Workers e processos:** definir entradas API/workers, destino dos eventos, claim e recuperação da outbox, backoff, TTL/tentativas de referências, DLQ e shutdown.
-- **Consultas:** snapshot consistente da reconciliação e cursor estável do ledger.
+- **Consultas:** snapshot consistente da reconciliação. Ledger paginado segue o contrato aceito acima.
 
 Pendências não são decisões aceitas. Registrar a escolha, motivo, alternativa e custo quando resolvidas; atualizar [testes](testing.md) com evidências e limitações.
 

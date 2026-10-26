@@ -23,6 +23,7 @@ src/
           transaction-pending-reference.ts
           outbox-message.ts
       application/
+        ledger.use-cases.ts
         wallet-ports.ts
         wallet.errors.ts
         wallet.use-cases.ts
@@ -41,6 +42,7 @@ src/
         migrations/migration-202610260005-win-loss-references.ts
         migrations/migration-202610260006-refund.ts
         migrations/migration-202610260007-rollback.ts
+        migrations/migration-202610260008-ledger-pagination.ts
       presentation/
         wallet.controller.ts
         wallet-http-error.filter.ts
@@ -65,6 +67,7 @@ tests/
     win-loss.test.ts
     refund.test.ts
     rollback.test.ts
+    ledger.test.ts
   integration/
     auth.test.ts
     stack.test.ts
@@ -73,6 +76,7 @@ tests/
     win-loss.test.ts
     refund.test.ts
     rollback.test.ts
+    ledger.test.ts
   support/
     run-tests.ts
     bet-database.ts
@@ -90,7 +94,7 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
-| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET/WIN/LOSS/REFUND/ROLLBACK e portas transacionais |
+| `src/modules/wagering/application` | Criação/consulta de Wallet, ledger paginado, abertura auditável, processamento/consulta de BET/WIN/LOSS/REFUND/ROLLBACK e portas transacionais |
 | `src/modules/wagering/domain/transactions` | OPENING interna e BET/WIN/LOSS/REFUND/ROLLBACK externas, resultados, referências e reidratação |
 | `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
@@ -107,6 +111,8 @@ O Compose fica na raiz em `compose.yaml`. Wallet e BET/WIN/LOSS/REFUND/ROLLBACK 
 WIN/LOSS ampliam o mesmo caso de uso, entidade e repositório de transações. O evento concreto de pendência está em `domain/events/transaction-pending-reference.ts`; a migration incremental mantém as anteriores. `tests/unit/win-loss.test.ts` e `tests/integration/win-loss.test.ts` cobrem as novas políticas; `bet.test.ts` reaproveita a barreira e os três subprocessos para WIN/LOSS/pendência e disputa do teto. Workers de referências continuam pendentes.
 
 REFUND amplia a mesma entidade e o caso de uso; a consulta de compensações usa o repositório transacional. A migration incremental instala o índice único compartilhado com ROLLBACK, agora processado. Os testes próprios de REFUND cobrem o percurso completo sem repetir as matrizes anteriores. ROLLBACK amplia o mesmo fluxo e possui testes próprios; o helper IPC de REFUND foi extraído para compartilhar os três subprocessos seguros, sem duplicar a suíte.
+
+`application/ledger.use-cases.ts` concentra a porta de leitura, validação do cursor e caso de uso da consulta. O controller de Wallet expõe a rota; a unidade de trabalho de leitura usa o repositório de Wallet com consulta SQL por tupla e reidratação em lote. A migration de paginação adiciona somente o índice; os testes anteriores ajustam a sequência de reversão para preservar suas provas.
 
 ## Organização por funcionalidade
 

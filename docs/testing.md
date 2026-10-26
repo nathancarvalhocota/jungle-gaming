@@ -12,7 +12,7 @@ Ambiente validado: Windows, Bun 1.4.4, PostgreSQL 18.6 em Docker, NestJS 12.2.0 
 | --- | --- |
 | `bun run typecheck` | Tipos estritos sem erros |
 | `bun run lint` | Biome sem erros ou avisos |
-| `bun run test` | 196 testes passaram, zero falhas, 1840 asserções |
+| `bun run test` | 209 testes passaram, zero falhas, 1959 asserções |
 | `git diff --check` | Sem erros de whitespace |
 
 `bun run test` usa `tests/support/run-tests.ts`: a conexão administrativa deriva a URL configurada e troca o banco por `/postgres`, sem conectar ao banco de desenvolvimento. Um banco `suite_validation_<uuid>` recebe a execução completa, inclusive testes de autenticação e bootstrap, por variável `DATABASE_URL` explícita no subprocesso. As suítes técnicas e financeiras criam bancos adicionais `stack_validation_<uuid>`, `wallet_validation_<uuid>` e `bet_validation_<uuid>`, com observadores independentes. Prefixo gerado e `current_database()` precisam coincidir antes de migrar e limpar. A CLI financeira recebe também nome esperado e URL explícita; nome divergente é recusado antes da migration. Sem alvo confirmado, não se autoriza limpeza. Logs de teste mostram apenas nomes dos bancos, sem URLs ou credenciais.
@@ -109,8 +109,23 @@ Validação completa: `bun run typecheck`, `bun run lint` e `bun run test` aprov
 
 FAILED permanece inalcançável. OPENING não tem identidade externa para lookup HTTP; no domínio, contexto precede kind. Os checks não demonstram elegibilidade completa entre linhas nem auditoria de SQL manual arbitrário. Workers, publicação e recuperação após crash continuam fora destas evidências.
 
+### Ledger paginado
+
+`tests/unit/ledger.test.ts` verifica contrato runtime, limites estritos e cursor: arrays/objetos/null/números, campos desconhecidos, espaços e quebras de linha, padding/caracteres/base64url não canônico, UTF-8 inválido, JSON malformado, versão, shape e vínculo à Wallet. Verifica UUID normalizado, padrão `50`, máximo `100`, consulta `limit + 1`, cursor somente com item adicional e propagação de falha de infraestrutura.
+
+`tests/integration/ledger.test.ts` usa PostgreSQL real no harness descartável existente, com migrations e observador independente:
+
+- Múltiplas páginas, UUIDs determinísticos e empates de timestamp; limite exato e última página sem cursor. Âncoras com microssegundos distintos dentro do mesmo milissegundo e UUIDs em ordem inversa demonstram comparação da tupla persistida, sem perda por truncamento em `Date`.
+- 101 lançamentos demonstram padrão `50`, máximo `100`, busca adicional e continuação. Abertura positiva, débito real por BET, centésimos e teto de `1000000.00` mantêm dinheiro em strings exatas.
+- Wallet vazia, Wallet ausente, cursor de outra Wallet, âncora inexistente e ID de lançamento de outra Wallet sob cursor forjado são distinguidos. Snapshot integral observado antes/depois das consultas preserva Wallet, saldo reconstruído, ledger, contagem de transações e eventos.
+- Movimentos concorrentes entre páginas demonstram que um lançamento mais recente exige reiniciar e outro com data abaixo da âncora pode aparecer na continuação. Não há garantia de snapshot entre requisições nem cobertura de toda possível ordem de commit.
+- Índice `(wallet_id, created_at, id)` existe, desaparece no down e volta no up, conservando dados e trigger de imutabilidade. As suítes anteriores mantêm suas provas de reversibilidade com um down adicional. Não se força EXPLAIN a escolher índice em tabela pequena.
+- Poucos percursos HTTP confirmam `200`, itens/cursor e dinheiro de abertura/débito, além de `400 INVALID_LEDGER_QUERY`, `400 INVALID_WALLET_INPUT` e `404 WALLET_NOT_FOUND`.
+
+As fixtures SQL de ordenação mantêm FKs, identidade externa, aritmética exata e saldo reconstruído; inserem timestamps diretamente para preservar microssegundos. Essas fixtures não comprovam gravação da outbox; as intenções persistidas são exercitadas pelos casos de uso reais nas demais suítes. Publicação continua pendente. `createdAt` da resposta usa milissegundos; a ordenação SQL preserva microssegundos independentemente dessa apresentação.
+
 ## Limites e continuidade
 
-Ainda não foram demonstrados: worker de referências, consultas de ledger/reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
+Ainda não foram demonstrados: worker de referências, reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
 
 Para os próximos tickets, preservar as evidências de BET e ampliar os cenários com referências fora de ordem, reversões e recuperação. Em cada cenário financeiro, conferir saldo reconstruído pelo ledger e ausência de efeitos extras. Mocks não substituem PostgreSQL ou SQS reais. Indisponibilidade de infraestrutura deve ser informada como cenário não verificado.

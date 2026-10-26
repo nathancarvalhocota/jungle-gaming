@@ -113,13 +113,17 @@ describe("REFUND integral in PostgreSQL", () => {
     await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(4);
     await state(w.id, "7464", 3, 3, 2, 5);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(6);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(7);
     const target = await refundTarget();
     await useCases.submit(target.refund, randomUUID());
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);

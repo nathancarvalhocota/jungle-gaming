@@ -123,11 +123,13 @@ describe("ROLLBACK integral in PostgreSQL", () => {
     if (!index) throw new Error("Shared reversal index missing");
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(5);
     expect(await snapshot(w.id)).toEqual(before);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(6);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(7);
     expect(await snapshot(w.id)).toEqual(before);
     expect(
       await sql(
@@ -136,6 +138,8 @@ describe("ROLLBACK integral in PostgreSQL", () => {
     ).toEqual([index]);
     await useCases.submit(rollback, randomUUID());
     const applied = await snapshot(w.id);
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await expect(db.orm.migrator.down()).rejects.toMatchObject({
       code: "23514",

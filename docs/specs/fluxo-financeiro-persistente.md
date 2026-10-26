@@ -1,6 +1,6 @@
 # Fluxo financeiro persistente
 
-Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva, BET idempotente, WIN/LOSS e REFUND compõem a base `4a5ae90`; ROLLBACK está implementado para revisão independente. A entrega se limita ao ticket 06, sem autorização para iniciar 07/08.
+Estado: execução incremental. Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK compõem a base `820ccab`. Somente o ticket 07 (ledger paginado) está implementado para revisão independente; 08 não foi iniciado.
 
 WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas confirmadas, alternativas e limites estão em [arquitetura](../architecture.md#win-loss-e-referências-opcionais). Persistir PENDING_REFERENCE não implementa o worker de reprocessamento.
 
@@ -8,7 +8,7 @@ WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas
 
 Os provedores precisam submeter operações financeiras sem cobrar uma aposta duas vezes, perder créditos ou produzir saldo negativo quando houver reenvios, falhas e processamento concorrente. O operador precisa consultar um resultado auditável e conferir o saldo contra o ledger.
 
-Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK. Ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md). Reversões integrais seguem as políticas aceitas de [REFUND](../architecture.md#refund-integral) e [ROLLBACK](../architecture.md#rollback-integral).
+Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK. Ledger paginado está implementado para revisão; reconciliação permanece pendente. Evidências reais estão em [testes](../testing.md). Reversões integrais seguem as políticas aceitas de [REFUND](../architecture.md#refund-integral) e [ROLLBACK](../architecture.md#rollback-integral).
 
 ## Solução
 
@@ -153,7 +153,8 @@ As escolhas abaixo precisam ser resolvidas antes do ticket que depende delas. N�
 | Ordem dos locks — resolvido para reversões | Wallet antes de claim/referência, sem outro lock na referência; consulta de compensações no mesmo contexto. READ COMMITTED e limites existentes; conflito específico do índice só após rollback produz 503, sem retry interno |
 | Identificadores e metadados internos de OPENING — resolvido | UUID interno, origem INTERNAL e campos externos ausentes; unicidades externas não usam sentinelas |
 | Evolução posterior de PENDING_REFERENCE | Snapshot persistido e replay sem reprocessar estão implementados; worker, TTL e backoff permanecem pendentes |
-| Snapshot da reconciliação, valores reconstruídos fora do teto e cursor/limites de paginação | Consistência das consultas e exatidão mesmo ao detectar corrupção |
+| Ledger paginado — resolvido | Keyset `created_at DESC, id DESC`; cursor v1 base64url vinculado à Wallet e âncora SQL imutável, sem snapshot; limite decimal estrito padrão 50, entre 1 e 100. Contrato e custos em [arquitetura](../architecture.md#ledger-paginado) |
+| Snapshot da reconciliação e valores reconstruídos fora do teto | Consistência da reconciliação e exatidão mesmo ao detectar corrupção |
 | Destino e políticas dos futuros workers | Publicação, reprocessamento e recuperação são obrigatórios na continuidade |
 
 ### Ordem de decomposição

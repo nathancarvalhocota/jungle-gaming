@@ -1,10 +1,20 @@
-import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+} from "@nestjs/common";
+import { LedgerUseCases } from "../application/ledger.use-cases.ts";
 import { WalletUseCases } from "../application/wallet.use-cases.ts";
 
 @Controller("wallets")
 export class WalletController {
   constructor(
     @Inject(WalletUseCases) private readonly walletUseCases: WalletUseCases,
+    @Inject(LedgerUseCases) private readonly ledgerUseCases: LedgerUseCases,
   ) {}
 
   @Post()
@@ -15,5 +25,10 @@ export class WalletController {
   @Get(":walletId")
   get(@Param("walletId") walletId: string) {
     return this.walletUseCases.get(walletId);
+  }
+
+  @Get(":walletId/ledger")
+  ledger(@Param("walletId") walletId: string, @Query() query: unknown) {
+    return this.ledgerUseCases.list(walletId, query);
   }
 }
