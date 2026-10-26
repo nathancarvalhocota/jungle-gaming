@@ -4,6 +4,7 @@ import type { EntityManager as PostgreSqlEntityManager } from "@mikro-orm/postgr
 import { defineConfig } from "@mikro-orm/postgresql";
 import { Migration202610250002WalletZero } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610250002-wallet-zero.ts";
 import { Migration202610250003AuditableOpening } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610250003-auditable-opening.ts";
+import { Migration202610250004IdempotentBet } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610250004-idempotent-bet.ts";
 import {
   OutboxMessageSchema,
   WagerTransactionSchema,
@@ -38,6 +39,7 @@ export function createOrmOptions(): ReturnType<
       migrationsList: [
         Migration202610250002WalletZero,
         Migration202610250003AuditableOpening,
+        Migration202610250004IdempotentBet,
       ],
       snapshot: false,
     },

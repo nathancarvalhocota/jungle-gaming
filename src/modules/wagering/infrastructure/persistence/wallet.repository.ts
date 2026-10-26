@@ -7,6 +7,7 @@ import {
 } from "../../domain/ledger/wallet-ledger-entry.ts";
 import { Money } from "../../domain/money.ts";
 import {
+  FailureCode,
   WagerTransaction,
   WagerTransactionKind,
   WagerTransactionStatus,
@@ -69,6 +70,13 @@ export class WalletRepository {
           : null,
         createdAt: transaction.createdAt,
         processedAt: transaction.processedAt ?? null,
+        providerId: transaction.providerId ?? null,
+        externalTransactionId: transaction.externalTransactionId ?? null,
+        idempotencyKey: transaction.idempotencyKey ?? null,
+        payloadHash: transaction.payloadHash ?? null,
+        roundId: transaction.roundId ?? null,
+        gameId: transaction.gameId ?? null,
+        failureCode: transaction.failureCode ?? null,
       }),
     );
     await this.em.flush();
@@ -78,10 +86,14 @@ export class WalletRepository {
     const record = await this.em.findOne(WagerTransactionSchema, { id });
     if (!record) return undefined;
     if (
-      record.origin !== "INTERNAL" ||
-      record.kind !== WagerTransactionKind.Opening ||
+      (record.origin !== "INTERNAL" && record.origin !== "EXTERNAL") ||
+      (record.kind !== WagerTransactionKind.Opening &&
+        record.kind !== WagerTransactionKind.Bet) ||
       (record.status !== WagerTransactionStatus.Pending &&
-        record.status !== WagerTransactionStatus.Processed)
+        record.status !== WagerTransactionStatus.Processed &&
+        record.status !== WagerTransactionStatus.Rejected) ||
+      (record.failureCode != null &&
+        record.failureCode !== FailureCode.InsufficientFunds)
     )
       throw new Error("Unsupported stored transaction");
     return WagerTransaction.rehydrate({
@@ -90,6 +102,19 @@ export class WalletRepository {
       playerId: record.playerId,
       origin: record.origin,
       kind: record.kind,
+      ...(record.origin === "EXTERNAL"
+        ? {
+            external: {
+              providerId: record.providerId ?? "",
+              externalTransactionId: record.externalTransactionId ?? "",
+              idempotencyKey: record.idempotencyKey ?? "",
+              payloadHash: record.payloadHash ?? "",
+              roundId: record.roundId ?? "",
+              gameId: record.gameId ?? "",
+            },
+          }
+        : {}),
+      failureCode: record.failureCode ?? undefined,
       status: record.status,
       money: readMoney(record.moneyMinorUnits, record.currency),
       balance:

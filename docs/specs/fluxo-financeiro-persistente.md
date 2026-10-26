@@ -1,12 +1,12 @@
 # Fluxo financeiro persistente
 
-Estado: especificação de integração; execução autorizada por ticket. Wallet com saldo zero foi entregue no commit daade6f; abertura positiva auditável está autorizada agora. Os demais tickets aguardam nova delegação após revisão.
+Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva e BET idempotente foram implementadas; BET aguarda revisão independente do maestro. O usuário autorizou o maestro a revisar, validar, commitar e delegar o próximo ticket sem nova aprovação rotineira; cada implementação continua isolada e depende da delegação do maestro.
 
 ## Problema
 
 Os provedores precisam submeter operações financeiras sem cobrar uma aposta duas vezes, perder créditos ou produzir saldo negativo quando houver reenvios, falhas e processamento concorrente. O operador precisa consultar um resultado auditável e conferir o saldo contra o ledger.
 
-Hoje existem bootstrap, extensão de autenticação e Money, Wallet e WalletLedgerEntry testados em memória. Ainda não existem schema financeiro, repositórios, unidade de trabalho da aplicação ou API financeira; os testes PostgreSQL atuais usam tabelas de ensaio.
+Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET. Os demais kinds, ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md).
 
 ## Solução
 
@@ -66,7 +66,7 @@ Esta especificação sintetiza requisitos e decisões; não afirma que todo o co
 - BET debita, WIN credita, LOSS não movimenta, REFUND compensa BET processada e ROLLBACK inverte BET, WIN ou REFUND processada. Referências obrigatórias, compatibilidade e valor integral seguem o enunciado; não assumir que toda referência informada já está processada.
 - Transações nascem PENDING. PROCESSED, REJECTED e FAILED são terminais; tentar alterá-las novamente é erro de programação. Referência ausente produz PENDING_REFERENCE e intenção de evento, sem lançar ou mudar saldo.
 - Rejeições financeiras são resultados persistidos com failureCode; não usar exceção genérica de infraestrutura como rejeição de negócio. Falha abortiva provoca rollback, sem transformar indisponibilidade em referência inexistente.
-- Idempotency-Key é obrigatório no HTTP. Hash usa JSON canônico dos campos de negócio, excluindo chave e metadados de transporte; o algoritmo e os campos exatos precisam ser definidos antes do ticket dependente.
+- Idempotency-Key é obrigatório no HTTP. Hash usa JSON canônico dos campos de negócio, excluindo chave e metadados de transporte; BET usa SHA-256 dos oito campos obrigatórios com chaves recursivamente ordenadas; detalhes e HTTP estão em [arquitetura](../architecture.md#bet-idempotente-e-concorrente).
 - Outbox persiste o envelope versionado dos eventos exigidos, com classe abstrata e subclasses concretas. Dinheiro no payload usa strings; não serializar a instância de Money nem bigint no JSON.
 - Registrar WagerTransactionProcessed inclusive para LOSS, WagerTransactionRejected para rejeição, WagerTransactionPendingReference para pendência e WalletBalanceChanged somente quando houver mudança de saldo.
 - Consulta e reconciliação seguem os contratos do desafio. Divergência não pode ser corrigida silenciosamente; sua sinalização em resposta, log e métrica não é opcional.
@@ -144,12 +144,12 @@ As escolhas abaixo precisam ser resolvidas antes do ticket que depende delas. N�
 
 | Pendência | Impacto |
 | --- | --- |
-| Algoritmo e campos do hash, propriedades opcionais e conteúdo não reconhecido | Comparação estável de payload entre HTTP e futura SQS |
-| Transições válidas detalhadas, failureCodes e códigos HTTP | Contrato público e distinção entre rejeição, pendência, conflito e falha transitória |
-| Zero por kind, WIN com referência opcional e referências pendentes/rejeitadas | Aceitação e resultado de operações; rejeição de zero na movimentação já foi decidida |
+| Opcionais e novos campos nos próximos kinds | BET tem hash e contrato fechado, sem opcionais nem conteúdo desconhecido; rever o hash ao ampliar o contrato |
+| Transições, failureCodes e HTTP dos demais kinds | BET já distingue processamento, rejeição, conflito, contrato inválido e falha transitória |
+| Zero nos demais kinds, WIN com referência opcional e referências pendentes/rejeitadas | BET zero retorna 400 sem persistência; demais políticas permanecem pendentes |
 | REFUND e ROLLBACK sobre a mesma BET e reversões de operações já compensadas | Interpretação adicional além da proibição explícita de repetição pelo mesmo tipo |
-| Timeout de lock, ordem de aquisição, rollback/retry e conflito pela identidade externa | Evitar bloqueios indefinidos, deadlocks e consultas em transação abortada |
-| Identificadores e metadados internos de OPENING | Auditar abertura sem fabricar provedor externo nem colidir com unicidades |
+| Ordem dos locks de referências e reversões | BET fixa uma Wallet antes do claim, READ COMMITTED, limites de 5s por lock/15s por comando, sem retry automático, e traduz conflito externo após rollback |
+| Identificadores e metadados internos de OPENING — resolvido | UUID interno, origem INTERNAL e campos externos ausentes; unicidades externas não usam sentinelas |
 | Resultado consultável de PENDING_REFERENCE e sua evolução posterior | Não confundir leitura de estado com reaplicação financeira em replay |
 | Snapshot da reconciliação, valores reconstruídos fora do teto e cursor/limites de paginação | Consistência das consultas e exatidão mesmo ao detectar corrupção |
 | Destino e políticas dos futuros workers | Publicação, reprocessamento e recuperação são obrigatórios na continuidade |

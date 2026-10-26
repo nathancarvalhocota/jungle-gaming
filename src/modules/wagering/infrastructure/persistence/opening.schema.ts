@@ -15,6 +15,16 @@ export const WagerTransactionSchema = defineEntity({
     balanceMinorUnits: p.bigint().nullable().fieldName("balance_minor_units"),
     createdAt: p.datetime().fieldName("created_at"),
     processedAt: p.datetime().nullable().fieldName("processed_at"),
+    providerId: p.text().nullable().fieldName("provider_id"),
+    externalTransactionId: p
+      .text()
+      .nullable()
+      .fieldName("external_transaction_id"),
+    idempotencyKey: p.text().nullable().fieldName("idempotency_key"),
+    payloadHash: p.text().nullable().fieldName("payload_hash"),
+    roundId: p.text().nullable().fieldName("round_id"),
+    gameId: p.text().nullable().fieldName("game_id"),
+    failureCode: p.text().nullable().fieldName("failure_code"),
   },
 });
 export type WagerTransactionRecord = InferEntity<typeof WagerTransactionSchema>;

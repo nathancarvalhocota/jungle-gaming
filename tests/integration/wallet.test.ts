@@ -92,7 +92,8 @@ describe("Wallet persistida com abertura auditável", () => {
   });
 
   test("migration de wallet aplica, reverte e reaplica no banco descartável", async () => {
-    expect(await orm.migrator.getExecuted()).toHaveLength(2);
+    expect(await orm.migrator.getExecuted()).toHaveLength(3);
+    await runMigrationScript("down");
     await runMigrationScript("down");
     expect(
       await observer.em
@@ -117,7 +118,7 @@ describe("Wallet persistida com abertura auditável", () => {
         .execute("select to_regclass('wallets') as table_name"),
     ).toEqual([{ table_name: null }]);
     await runMigrationScript("up");
-    expect(await orm.migrator.getExecuted()).toHaveLength(2);
+    expect(await orm.migrator.getExecuted()).toHaveLength(3);
   });
 
   test("cria e reidrata saldo zero preservando centavos, IDs, versão e datas", async () => {

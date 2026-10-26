@@ -1,6 +1,7 @@
 import type { WalletLedgerEntry } from "../ledger/wallet-ledger-entry.ts";
 import type { MoneyProps } from "../money.ts";
 import type { WagerTransaction } from "../transactions/wager-transaction.ts";
+import { WagerTransactionStatus } from "../transactions/wager-transaction.ts";
 import type { Wallet } from "../wallet/wallet.ts";
 import { IntegrationEvent } from "./integration-event.ts";
 
@@ -27,7 +28,10 @@ export class WagerTransactionProcessed extends IntegrationEvent<WagerTransaction
     transaction: WagerTransaction,
     context: EventContext,
   ): WagerTransactionProcessed {
-    if (!transaction.isTerminal() || !transaction.balance)
+    if (
+      transaction.status !== WagerTransactionStatus.Processed ||
+      !transaction.balance
+    )
       throw new Error("A processed transaction is required");
     const event = new WagerTransactionProcessed({
       ...context,

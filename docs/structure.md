@@ -19,21 +19,28 @@ src/
         events/
           integration-event.ts
           opening-events.ts
+          transaction-rejected.ts
           outbox-message.ts
       application/
         wallet-ports.ts
         wallet.errors.ts
         wallet.use-cases.ts
+        transaction-input.ts
+        transaction-ports.ts
+        transaction.use-cases.ts
       infrastructure/persistence/
         wallet.schema.ts
         wallet.repository.ts
         wallet.unit-of-work.ts
+        transaction.repository.ts
         opening.schema.ts
         migrations/migration-202610250002-wallet-zero.ts
         migrations/migration-202610250003-auditable-opening.ts
+        migrations/migration-202610250004-idempotent-bet.ts
       presentation/
         wallet.controller.ts
         wallet-http-error.filter.ts
+        transaction.controller.ts
       wagering.module.ts
   platform/
     health/
@@ -50,12 +57,16 @@ tests/
     wallet-ledger-entry.test.ts
     wallet-http-error.filter.test.ts
     auditable-opening.test.ts
+    bet.test.ts
   integration/
     auth.test.ts
     stack.test.ts
     wallet.test.ts
+    bet.test.ts
   support/
     run-tests.ts
+    bet-database.ts
+    bet-process.ts
     stack/
       migration.ts
       probe.schema.ts
@@ -68,8 +79,8 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
-| `src/modules/wagering/application` | Criação/consulta de Wallet, coordenação atômica da abertura auditável e portas de persistência/transação |
-| `src/modules/wagering/domain/transactions` | OPENING interna, estado pendente/processado e reidratação |
+| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET e portas transacionais |
+| `src/modules/wagering/domain/transactions` | OPENING interna/BET externa, resultados processado/rejeitado e reidratação |
 | `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
 | `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
@@ -80,7 +91,7 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. Wallet possui API e persistência com OPENING, ledger e outbox na abertura positiva; demais operações e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
+O Compose fica na raiz em `compose.yaml`. Wallet e BET possuem HTTP, persistência, ledger e outbox atômicos. Demais kinds e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
 
 ## Organização por funcionalidade
 
@@ -121,7 +132,7 @@ Dentro da funcionalidade, `domain` concentra regras e estados; `application`, ca
 
 As migrations, unidade de trabalho, schemas de Wallet, OPENING, ledger e outbox estão em `wagering/infrastructure/persistence`; inbox e publicação continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
 
-Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. Operações externas e inbox continuam pendentes, conforme [arquitetura](architecture.md).
+Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. Demais kinds externos e inbox continuam pendentes, conforme [arquitetura](architecture.md).
 
 ## Documentação
 

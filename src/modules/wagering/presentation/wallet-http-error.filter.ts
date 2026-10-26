@@ -5,6 +5,7 @@ import {
   Inject,
 } from "@nestjs/common";
 import { BaseExceptionFilter, HttpAdapterHost } from "@nestjs/core";
+import { TransactionApplicationError } from "../application/transaction-input.ts";
 import {
   InvalidWalletInputError,
   UnsupportedWalletCurrencyError,
@@ -20,7 +21,11 @@ export class WalletHttpErrorFilter extends BaseExceptionFilter {
 
   override catch(error: unknown, host: ArgumentsHost): void {
     const request = host.switchToHttp().getRequest<{ url?: string }>();
-    if (!isWalletRoute(request.url ?? "")) {
+    const transactionRoute =
+      /^(?:\/wagering\/transactions|\/providers\/[^/]+\/wagering\/transactions)(?:\/|\?|$)/.test(
+        request.url ?? "",
+      );
+    if (!isWalletRoute(request.url ?? "") && !transactionRoute) {
       super.catch(error, host);
       return;
     }
@@ -29,7 +34,20 @@ export class WalletHttpErrorFilter extends BaseExceptionFilter {
       return;
     }
     const response = host.switchToHttp().getResponse();
-    const mapped = mapWalletError(error);
+    const mapped =
+      error instanceof TransactionApplicationError
+        ? {
+            statusCode: error.statusCode,
+            code: error.code,
+            message: error.message,
+          }
+        : transactionRoute && error instanceof HttpException
+          ? {
+              statusCode: 400,
+              code: "INVALID_TRANSACTION_INPUT",
+              message: "Transaction input is invalid",
+            }
+          : mapWalletError(error);
     response.status(mapped.statusCode).json({
       statusCode: mapped.statusCode,
       code: mapped.code,
