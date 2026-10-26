@@ -4,22 +4,26 @@ import {
   WalletBalanceChanged,
 } from "../domain/events/opening-events.ts";
 import { OutboxMessage } from "../domain/events/outbox-message.ts";
+import { WagerTransactionPendingReference } from "../domain/events/transaction-pending-reference.ts";
 import { WagerTransactionRejected } from "../domain/events/transaction-rejected.ts";
+import { Money } from "../domain/money.ts";
 import {
   FailureCode,
   WagerTransaction,
+  WagerTransactionKind,
+  WagerTransactionStatus,
 } from "../domain/transactions/wager-transaction.ts";
 import {
   invalidTransaction,
   isUuid,
   TransactionApplicationError,
-  validateBet,
+  validateTransaction,
 } from "./transaction-input.ts";
 import type { TransactionUnitOfWork } from "./transaction-ports.ts";
 export class TransactionUseCases {
   constructor(private readonly unitOfWork: TransactionUnitOfWork) {}
   async submit(body: unknown, key: unknown) {
-    const validated = validateBet(body, key);
+    const validated = validateTransaction(body, key);
     const { input, money, hash } = validated;
     return this.unitOfWork.execute(async (repository) => {
       const existing = await repository.findByKey(validated.key);
@@ -41,8 +45,14 @@ export class TransactionUseCases {
           "Wallet context does not match",
         );
       const at = new Date();
-      const transaction = WagerTransaction.createBet({
+      const transaction = WagerTransaction.createExternal({
         ...input,
+        kind:
+          input.kind === "BET"
+            ? WagerTransactionKind.Bet
+            : input.kind === "WIN"
+              ? WagerTransactionKind.Win
+              : WagerTransactionKind.Loss,
         money,
         id: randomUUID(),
         idempotencyKey: validated.key,
@@ -55,8 +65,55 @@ export class TransactionUseCases {
         return replay(winner, hash);
       }
       const context = { correlationId: transaction.id, occurredAt: at };
-      if (wallet.balance.isLessThan(money)) {
-        transaction.reject(FailureCode.InsufficientFunds, wallet.balance, at);
+      let failure: FailureCode | undefined;
+      let referenceId: string | undefined;
+      let pendingReference = false;
+      if (input.referenceExternalTransactionId !== undefined) {
+        if (
+          input.referenceExternalTransactionId === input.externalTransactionId
+        )
+          failure = FailureCode.ReferenceContextMismatch;
+        else {
+          const reference = await repository.findExternal(
+            input.providerId,
+            input.referenceExternalTransactionId,
+          );
+          if (!reference) pendingReference = true;
+          else {
+            failure = transaction.referenceFailure(reference);
+            if (failure !== FailureCode.ReferenceContextMismatch)
+              referenceId = reference.id;
+            pendingReference =
+              failure === undefined &&
+              reference.status !== WagerTransactionStatus.Processed;
+          }
+        }
+      }
+      if (pendingReference) {
+        transaction.markPendingReference(wallet.balance, referenceId);
+        await repository.saveTransaction(transaction);
+        await repository.enqueue(
+          OutboxMessage.enqueue(
+            WagerTransactionPendingReference.from(transaction, {
+              ...context,
+              eventId: randomUUID(),
+            }),
+          ),
+        );
+        return result(transaction, false);
+      }
+      if (!failure && input.kind === "BET" && wallet.balance.isLessThan(money))
+        failure = FailureCode.InsufficientFunds;
+      if (
+        !failure &&
+        input.kind === "WIN" &&
+        BigInt(wallet.balance.toJSON().amount.replace(".", "")) +
+          BigInt(money.toJSON().amount.replace(".", "")) >
+          Money.MAX_MINOR_UNITS
+      )
+        failure = FailureCode.BalanceLimitExceeded;
+      if (failure) {
+        transaction.reject(failure, wallet.balance, at, referenceId);
         await repository.saveTransaction(transaction);
         await repository.enqueue(
           OutboxMessage.enqueue(
@@ -67,16 +124,21 @@ export class TransactionUseCases {
           ),
         );
       } else {
-        const entry = wallet.debit({
-          entryId: randomUUID(),
-          transactionId: transaction.id,
-          money,
-          at,
-        });
-        transaction.markProcessed(wallet.balance, at);
+        const entry =
+          input.kind === "LOSS"
+            ? undefined
+            : wallet[input.kind === "WIN" ? "credit" : "debit"]({
+                entryId: randomUUID(),
+                transactionId: transaction.id,
+                money,
+                at,
+              });
+        transaction.markProcessed(wallet.balance, at, referenceId);
         await repository.saveTransaction(transaction);
-        await repository.saveWallet(wallet);
-        await repository.createLedgerEntry(entry);
+        if (entry) {
+          await repository.saveWallet(wallet);
+          await repository.createLedgerEntry(entry);
+        }
         await repository.enqueue(
           OutboxMessage.enqueue(
             WagerTransactionProcessed.from(transaction, {
@@ -85,14 +147,15 @@ export class TransactionUseCases {
             }),
           ),
         );
-        await repository.enqueue(
-          OutboxMessage.enqueue(
-            WalletBalanceChanged.from(wallet, entry, {
-              ...context,
-              eventId: randomUUID(),
-            }),
-          ),
-        );
+        if (entry)
+          await repository.enqueue(
+            OutboxMessage.enqueue(
+              WalletBalanceChanged.from(wallet, entry, {
+                ...context,
+                eventId: randomUUID(),
+              }),
+            ),
+          );
       }
       return result(transaction, false);
     });
@@ -120,7 +183,11 @@ function replay(transaction: WagerTransaction, hash: string) {
   return result(transaction, true);
 }
 function result(transaction: WagerTransaction, idempotentReplay: boolean) {
-  if (!transaction.isTerminal() || !transaction.balance)
+  if (
+    (!transaction.isTerminal() &&
+      transaction.status !== WagerTransactionStatus.PendingReference) ||
+    !transaction.balance
+  )
     throw new Error("Transaction result is incomplete");
   return {
     transactionId: transaction.id,
@@ -161,5 +228,14 @@ function audit(transaction: WagerTransaction | undefined) {
       : {}),
     createdAt: transaction.createdAt.toISOString(),
     processedAt: transaction.processedAt?.toISOString(),
+    ...(transaction.referenceExternalTransactionId
+      ? {
+          referenceExternalTransactionId:
+            transaction.referenceExternalTransactionId,
+        }
+      : {}),
+    ...(transaction.referenceTransactionId
+      ? { referenceTransactionId: transaction.referenceTransactionId }
+      : {}),
   };
 }

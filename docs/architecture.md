@@ -1,6 +1,6 @@
 # Arquitetura
 
-Requisitos obrigatórios estão no [desafio](challenge.md). Esta página registra escolhas e pendências; versões ficam em [stack](stack.md), arquivos em [estrutura](structure.md) e evidências em [testes](testing.md). Wallet possui criação e consulta persistidas, incluindo abertura positiva auditável. BET possui processamento idempotente, concorrência por carteira e consultas; os demais kinds continuam pendentes.
+Requisitos obrigatórios estão no [desafio](challenge.md). Esta página registra escolhas e pendências; versões ficam em [stack](stack.md), arquivos em [estrutura](structure.md) e evidências em [testes](testing.md). Wallet possui criação e consulta persistidas, incluindo abertura positiva auditável. BET/WIN/LOSS possuem processamento idempotente, concorrência por carteira e consultas; REFUND e ROLLBACK continuam pendentes.
 
 ## Decisões aceitas
 
@@ -48,7 +48,7 @@ Na disputa pela chave, usar QueryBuilder do MikroORM no adaptador, com `INSERT .
 
 Publicação SQS e confirmação da mensagem recebida ocorrem após commit. A outbox guarda a intenção atomicamente; publicação pode repetir após falha, exigindo deduplicação pela identidade estável do evento. Atomicidade não substitui concorrência, idempotência ou constraints.
 
-A API e o consumidor SQS reutilizarão o mesmo caso de uso do módulo `wagering`. Wallet, transações e ledger mantêm responsabilidades distintas dentro dessa fronteira financeira; inbox quando aplicável e outbox participarão da mesma transação SQL. As portas e unidades de trabalho cobrem criação/consulta de Wallet, abertura auditável e processamento/consulta de BET. Os demais kinds permanecem pendentes.
+A API e o consumidor SQS reutilizarão o mesmo caso de uso do módulo `wagering`. Wallet, transações e ledger mantêm responsabilidades distintas dentro dessa fronteira financeira; inbox quando aplicável e outbox participarão da mesma transação SQL. As portas e unidades de trabalho cobrem criação/consulta de Wallet, abertura auditável e processamento/consulta de BET/WIN/LOSS. REFUND e ROLLBACK permanecem pendentes.
 
 Referências: [transações MikroORM](https://mikro-orm.io/docs/transactions), [contexto isolado](https://mikro-orm.io/docs/identity-map), [Unit of Work](https://mikro-orm.io/docs/unit-of-work) e [alternativa TypeORM](https://typeorm.io/docs/transactions/).
 
@@ -78,11 +78,11 @@ O mesmo EntityManager transacional persiste Wallet na versão 1, OPENING process
 
 ## BET idempotente e concorrente
 
-O contrato externo aceita somente BET positiva em BRL. São obrigatórios `providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind` e `money`. Propriedades desconhecidas, `null` e `referenceExternalTransactionId` são recusados; referências terão contrato nos próximos kinds. Strings precisam ser não vazias e não são normalizadas; UUID de Wallet é convertido para minúsculas. Zero retorna `400 INVALID_TRANSACTION_INPUT` antes de persistir, coerente com a proibição de lançamento zero. Alternativa: criar aposta sem movimento, que exigiria outra política de negócio.
+O contrato de BET aceita aposta positiva em BRL; WIN/LOSS e seus opcionais estão descritos na seção seguinte. São obrigatórios `providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind` e `money`. Propriedades desconhecidas, `null` e `referenceExternalTransactionId` são recusados; esse campo é reservado a WIN/LOSS nesta entrega. Strings precisam ser não vazias e não são normalizadas; UUID de Wallet é convertido para minúsculas. Zero retorna `400 INVALID_TRANSACTION_INPUT` antes de persistir, coerente com a proibição de lançamento zero. Alternativa: criar aposta sem movimento, que exigiria outra política de negócio.
 
 O hash é SHA-256 hexadecimal de JSON UTF-8 com chaves ordenadas recursivamente, contendo exatamente esses oito campos; `money` contém `amount` e `currency` como strings. Chave e metadados de transporte ficam fora. Não há campos opcionais nesse contrato. Alternativa: aceitar e normalizar extras/opcionais, acrescentando ambiguidades à comparação. Toda entrada passa pela mesma validação no caso de uso, também reutilizável pelo futuro SQS.
 
-A transação externa nasce `PENDING` e termina em `PROCESSED` ou `REJECTED`; ambos bloqueiam novas transições. Insuficiência produz `INSUFFICIENT_FUNDS`, saldo observado e instante persistidos, sem mudar Wallet/versão/ledger, com um `WagerTransactionRejected` v1. Sucesso guarda resultado, débito, Wallet com versão incrementada e dois eventos: `WagerTransactionProcessed` e `WalletBalanceChanged` v1. Cada evento tem UUID próprio e correlação no ID da transação. Replay lê o resultado original, inclusive saldo, e não grava eventos. `FAILED` e `PENDING_REFERENCE` permanecem vocabulário reservado, sem transições implementadas neste ticket.
+A transação externa nasce `PENDING` e termina em `PROCESSED` ou `REJECTED`; ambos bloqueiam novas transições. Insuficiência produz `INSUFFICIENT_FUNDS`, saldo observado e instante persistidos, sem mudar Wallet/versão/ledger, com um `WagerTransactionRejected` v1. Sucesso guarda resultado, débito, Wallet com versão incrementada e dois eventos: `WagerTransactionProcessed` e `WalletBalanceChanged` v1. Cada evento tem UUID próprio e correlação no ID da transação. Replay lê o resultado original, inclusive saldo, e não grava eventos. `FAILED` continua reservado; PENDING_REFERENCE é implementado para WIN/LOSS na seção seguinte.
 
 A unidade de trabalho fixa `READ COMMITTED`. Primeiro procura chave/hash para resolver replay ou conflito sem depender do estado atual da Wallet. Se ausente, adquire `FOR UPDATE` na Wallet solicitada, valida jogador/moeda, tenta o claim por QueryBuilder e decide sobre o saldo. Perder a chave leva a uma nova leitura do vencedor, sem bloquear sua Wallet. Cada tentativa segura uma única Wallet; FKs imediatas permanecem preservadas. Essa ordem evita upgrades concorrentes do `KEY SHARE` da FK para `FOR UPDATE`. Alternativa descartada: claim antes da Wallet com FK diferida, que exigiria alterar a garantia do schema. As constraints asseguram chave global e par provedor/identificador externo; a violação externa é reconhecida pelo nome específico após rollback, sem sobrescrever o vencedor.
 
@@ -94,12 +94,28 @@ As consultas por ID interno ou provedor/identificador externo retornam `200` com
 
 A migration `Migration202610250004IdempotentBet` amplia somente OPENING interna/BET externa, com campos, unicidades e checks de identidade/estado. Reverte e reaplica preservando OPENING; reverter com BET existente é recusado atomicamente pelo check da versão anterior, sem apagar dados. A reversão exige ausência de operações externas; não é uma migração de dados para descartar apostas.
 
+## WIN, LOSS e referências opcionais
+
+WIN exige valor positivo; zero é contrato inválido (`400 INVALID_TRANSACTION_INPUT`), preservando a regra de crédito/ledger efetivo. LOSS aceita de `0.00` até `1000000.00` como valor informativo e não chama movimentação: saldo, versão, data de atualização e ledger ficam preservados. Alternativa: recusar zero em todos os kinds; manter zero em LOSS permite registrar resultado sem movimento fictício.
+
+WIN sem referência é elegível. WIN e LOSS podem informar `referenceExternalTransactionId`, string não vazia; BET continua recusando esse campo. A referência é buscada somente por provedor/identificador externo, sem lock adicional, após adquirir o lock da Wallet conforme BET. Validam-se provedor, jogador, Wallet, moeda e rodada antes do estado, sem impor igualdade de jogo ou de valor. Uma BET processada pode receber múltiplas WIN; não foi criado limite de resultados por BET. Alternativas seriam exigir referência sempre ou impor relação de valor/quantidade, restrições adicionais ausentes do desafio.
+
+Referência válida exige kind BET e estado PROCESSED. Incompatibilidade de contexto e autorreferência rejeitam com `REFERENCE_CONTEXT_MISMATCH`; kind diferente rejeita com `REFERENCE_KIND_MISMATCH`; BET rejeitada produz `REFERENCE_NOT_PROCESSED`. Referência ausente ou BET PENDING produz `PENDING_REFERENCE`; a política também reserva espera para uma referência elegível PENDING_REFERENCE, mas BET nesse estado não é produzida pelo contrato atual. Uma WIN/LOSS já pendente continua sendo kind inelegível como referência, antes de examinar seu estado. A política futura para referência FAILED é REFERENCE_NOT_PROCESSED; FAILED permanece fora dos estados alcançáveis e do schema desta entrega, sem implementação ou prova dessa extensão agora.
+
+Após lookup e contexto válido, o ID interno conhecido é guardado, inclusive na pendência e na rejeição por kind/estado. Ausência, contexto incompatível e autorreferência não fabricam esse ID. Uma FK composta reforça a identidade e o contexto da referência resolvida; o domínio verifica elegibilidade. Falha de consulta propaga e desfaz a tentativa; jamais vira referência inexistente. Alternativa de bloquear também a referência acrescentaria coordenação entre carteiras; os estados terminais são imutáveis no domínio e as operações válidas compartilham a Wallet já bloqueada.
+
+O crédito é comparado ao teto por soma exata em bigint antes de movimentar. Excesso produz `REJECTED BALANCE_LIMIT_EXCEEDED`, com saldo observado e instante, um WagerTransactionRejected, sem movimento parcial. Não se captura MoneyError genérico para fabricar essa rejeição. WIN processada tem um CREDIT e dois eventos; LOSS tem somente WagerTransactionProcessed. Pendência tem somente WagerTransactionPendingReference v1, correlação no ID da operação e dinheiro em strings. Todas as gravações usam a mesma transação SQL.
+
+PENDING_REFERENCE guarda saldo observado, referência externa e ID interno quando conhecido, sem failureCode nem processedAt. HTTP retorna 202 no novo aceite e no replay, consultas retornam 200. O replay recupera o estado persistido antes de consultar a Wallet atual e não reprocessa, ainda que a BET chegue depois. O worker futuro poderá evoluir o estado não terminal; não há reprocessamento, TTL ou backoff agora. Alternativa: reprocessar no POST repetido, que misturaria consulta idempotente com nova tentativa financeira.
+
+O hash BET permanece byte a byte igual ao contrato anterior, demonstrado por vetor literal calculado na base 03. WIN/LOSS acrescentam a referência ao JSON canônico apenas quando informada; ausência não inclui chave vazia ou null. Null, vazio e propriedades desconhecidas são recusados. Sucesso novo/replay continua 201/200 e rejeição/replay 422. A migration incremental `Migration202610260005WinLossReferences` amplia os checks e cria os campos e FK de referência, preservando OPENING/BET e ledger imutável; down com WIN/LOSS existentes falha atomicamente, sem apagar dados.
+
 ## Pendências e propostas
 
 - **Money:** saldo não negativo já percorre string/`bigint` PostgreSQL/string pelo repositório, com aplicação de Wallet restrita a BRL. Reconstrução de valores internos com sinal e regras das demais operações continuam pendentes.
-- **Concorrência:** BET demonstra lock por Wallet, unicidades globais, avanço de outra carteira durante contenção e disputas em três processos. Coordenação das referências e reversões continua pendente.
-- **Schema:** unicidade, não negatividade e teto de Wallet estão implementados; ledger imutável, OPENING e outbox também possuem schema e constraints. Inbox, demais kinds externos e reversões continuam pendentes. As evidências atuais não equivalem à seção 5.9 completa.
-- **Contratos e regras:** referências opcionais ou ainda pendentes/rejeitadas; BET revertida por REFUND e ROLLBACK; estados, códigos de falha e respostas HTTP dos demais kinds.
+- **Concorrência:** BET demonstra lock por Wallet, unicidades globais, avanço de outra carteira durante contenção e disputas em três processos. Coordenação de reversões e reprocessamento por worker continua pendente.
+- **Schema:** unicidade, não negatividade e teto de Wallet estão implementados; ledger imutável, OPENING e outbox também possuem schema e constraints. Inbox e reversões continuam pendentes. As evidências atuais não equivalem à seção 5.9 completa.
+- **Contratos e regras:** BET revertida por REFUND e ROLLBACK; estados, códigos de falha e respostas HTTP das reversões.
 - **Workers e processos:** definir entradas API/workers, destino dos eventos, claim e recuperação da outbox, backoff, TTL/tentativas de referências, DLQ e shutdown.
 - **Consultas:** snapshot consistente da reconciliação e cursor estável do ledger.
 

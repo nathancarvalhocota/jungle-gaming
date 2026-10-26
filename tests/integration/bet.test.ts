@@ -88,11 +88,13 @@ describe("BET persistente, idempotente e concorrente", () => {
     const w = await wallet();
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(2);
     await assertState(w.id, "10000", 0, 0, 0);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(3);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(4);
   });
   test("50 reenvios simultâneos debitam uma vez e replay guarda saldo original após outra movimentação", async () => {
     const w = await wallet();
@@ -458,11 +460,15 @@ describe("BET persistente, idempotente e concorrente", () => {
       constraint: "transactions_external_identity_unique",
     });
     await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
     await expect(db.orm.migrator.down()).rejects.toMatchObject({
       code: "23514",
       constraint: "transactions_internal_opening",
     });
     expect(await db.orm.migrator.getExecuted()).toHaveLength(3);
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.up();
     expect(
       (
         await db.observer.em
@@ -544,5 +550,105 @@ describe("BET persistente, idempotente e concorrente", () => {
       if (previousUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = previousUrl;
     }
+  });
+  test("três processos compartilham idempotência WIN/LOSS/pendência e disputam teto sem crédito duplicado", async () => {
+    const w = await wallet("999999.00");
+    const win = { ...bet(w, "0.50"), kind: "WIN" };
+    const loss = { ...bet(w, "0.00"), kind: "LOSS" };
+    const pending = {
+      ...bet(w, "0.01"),
+      kind: "WIN",
+      referenceExternalTransactionId: "missing-three-processes",
+    };
+    const keys = [randomUUID(), randomUUID(), randomUUID()];
+    const jobs = Array.from(
+      { length: 3 },
+      () => [] as { body: unknown; key: string }[],
+    );
+    for (let i = 0; i < 50; i++) {
+      for (const [index, body] of [win, loss, pending].entries())
+        jobs[i % 3]?.push({ body, key: keys[index] ?? "" });
+    }
+    const workers = jobs.map((batch) => processWorker(batch));
+    try {
+      expect(
+        new Set(await Promise.all(workers.map((worker) => worker.ready))).size,
+      ).toBe(3);
+      for (const worker of workers) worker.child.send("start");
+      const results = (
+        await Promise.all(workers.map((worker) => worker.result))
+      ).flat();
+      expect(results).toHaveLength(150);
+      expect(results.filter((result) => "error" in result)).toHaveLength(0);
+      expect(
+        results.filter(
+          (result) => "result" in result && !result.result.idempotentReplay,
+        ),
+      ).toHaveLength(3);
+      expect(
+        await Promise.all(workers.map((worker) => worker.child.exited)),
+      ).toEqual([0, 0, 0]);
+    } finally {
+      for (const worker of workers)
+        if (worker.child.exitCode === null) worker.child.kill();
+      await Promise.all(workers.map((worker) => worker.child.exited));
+    }
+    const capJobs = Array.from({ length: 3 }, () => [
+      { body: { ...bet(w, "0.50"), kind: "WIN" }, key: randomUUID() },
+    ]);
+    const capWorkers = capJobs.map((batch) => processWorker(batch));
+    try {
+      expect(
+        new Set(await Promise.all(capWorkers.map((worker) => worker.ready)))
+          .size,
+      ).toBe(3);
+      for (const worker of capWorkers) worker.child.send("start");
+      const results = (
+        await Promise.all(capWorkers.map((worker) => worker.result))
+      ).flat();
+      expect(results.filter((result) => "error" in result)).toHaveLength(0);
+      expect(
+        await Promise.all(capWorkers.map((worker) => worker.child.exited)),
+      ).toEqual([0, 0, 0]);
+    } finally {
+      for (const worker of capWorkers)
+        if (worker.child.exitCode === null) worker.child.kill();
+      await Promise.all(capWorkers.map((worker) => worker.child.exited));
+    }
+    const [row] = await sql<
+      {
+        balance: string;
+        reconstructed: string;
+        version: number;
+        wins: number;
+        rejected: number;
+        pending: number;
+        loss: number;
+        entries: number;
+        events: number;
+      }[]
+    >(
+      `select balance_minor_units::text as balance, version,
+      (select sum(case when direction='CREDIT' then money_minor_units else -money_minor_units end)::text from wallet_ledger_entries where wallet_id=w.id) as reconstructed,
+      (select count(*)::int from wager_transactions where wallet_id=w.id and kind='WIN' and status='PROCESSED') as wins,
+      (select count(*)::int from wager_transactions where wallet_id=w.id and status='REJECTED' and failure_code='BALANCE_LIMIT_EXCEEDED') as rejected,
+      (select count(*)::int from wager_transactions where wallet_id=w.id and status='PENDING_REFERENCE') as pending,
+      (select count(*)::int from wager_transactions where wallet_id=w.id and kind='LOSS') as loss,
+      (select count(*)::int from wallet_ledger_entries where wallet_id=w.id) as entries,
+      (select count(*)::int from outbox_messages o join wager_transactions t on o.payload->'data'->>'transactionId'=t.id::text where t.wallet_id=w.id) as events
+      from wallets w where id=?`,
+      [w.id],
+    );
+    expect(row).toEqual({
+      balance: "100000000",
+      reconstructed: "100000000",
+      version: 3,
+      wins: 2,
+      rejected: 2,
+      pending: 1,
+      loss: 1,
+      entries: 3,
+      events: 10,
+    });
   });
 });

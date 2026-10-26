@@ -21,6 +21,10 @@ export interface BetInput {
   kind: "BET";
   money: { amount: string; currency: string };
 }
+export interface TransactionInput extends Omit<BetInput, "kind"> {
+  kind: "BET" | "WIN" | "LOSS";
+  referenceExternalTransactionId?: string;
+}
 export function invalidTransaction(): never {
   throw new TransactionApplicationError(
     "INVALID_TRANSACTION_INPUT",
@@ -40,6 +44,14 @@ export function validateBet(
   input: unknown,
   key: unknown,
 ): { input: BetInput; money: Money; key: string; hash: string } {
+  const validated = validateTransaction(input, key);
+  if (validated.input.kind !== "BET") invalidTransaction();
+  return { ...validated, input: { ...validated.input, kind: "BET" } };
+}
+export function validateTransaction(
+  input: unknown,
+  key: unknown,
+): { input: TransactionInput; money: Money; key: string; hash: string } {
   if (!isRecord(input) || typeof key !== "string" || !key.trim())
     invalidTransaction();
   const fields = [
@@ -52,12 +64,17 @@ export function validateBet(
     "kind",
     "money",
   ];
-  if (Object.keys(input).some((k) => !fields.includes(k))) invalidTransaction();
+  if (
+    Object.keys(input).some(
+      (k) => ![...fields, "referenceExternalTransactionId"].includes(k),
+    )
+  )
+    invalidTransaction();
   for (const field of fields.filter((k) => k !== "money"))
     if (typeof input[field] !== "string" || !input[field].trim())
       invalidTransaction();
   if (
-    input.kind !== "BET" ||
+    !["BET", "WIN", "LOSS"].includes(String(input.kind)) ||
     !isUuid(String(input.walletId)) ||
     !isRecord(input.money)
   )
@@ -78,16 +95,31 @@ export function validateBet(
     if (error instanceof MoneyError) invalidTransaction();
     throw error;
   }
-  if (!money.isPositive()) invalidTransaction();
-  const validated: BetInput = {
+  if (input.kind !== "LOSS" && !money.isPositive()) invalidTransaction();
+  const hasReference = Object.hasOwn(input, "referenceExternalTransactionId");
+  if (
+    hasReference &&
+    (input.kind === "BET" ||
+      typeof input.referenceExternalTransactionId !== "string" ||
+      !input.referenceExternalTransactionId.trim())
+  )
+    invalidTransaction();
+  const validated: TransactionInput = {
     providerId: String(input.providerId),
     externalTransactionId: String(input.externalTransactionId),
     playerId: String(input.playerId),
     walletId: String(input.walletId).toLowerCase(),
     roundId: String(input.roundId),
     gameId: String(input.gameId),
-    kind: "BET",
+    kind: input.kind as TransactionInput["kind"],
     money: money.toJSON(),
+    ...(hasReference
+      ? {
+          referenceExternalTransactionId: String(
+            input.referenceExternalTransactionId,
+          ),
+        }
+      : {}),
   };
   return {
     input: validated,

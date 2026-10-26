@@ -12,7 +12,7 @@ Ambiente validado: Windows, Bun 1.4.4, PostgreSQL 18.6 em Docker, NestJS 12.2.0 
 | --- | --- |
 | `bun run typecheck` | Tipos estritos sem erros |
 | `bun run lint` | Biome sem erros ou avisos |
-| `bun run test` | 154 testes passaram, zero falhas, 955 asserções |
+| `bun run test` | 170 testes passaram, zero falhas, 1182 asserções |
 | `git diff --check` | Sem erros de whitespace |
 
 `bun run test` usa `tests/support/run-tests.ts`: a conexão administrativa deriva a URL configurada e troca o banco por `/postgres`, sem conectar ao banco de desenvolvimento. Um banco `suite_validation_<uuid>` recebe a execução completa, inclusive testes de autenticação e bootstrap, por variável `DATABASE_URL` explícita no subprocesso. As suítes técnicas e financeiras criam bancos adicionais `stack_validation_<uuid>`, `wallet_validation_<uuid>` e `bet_validation_<uuid>`, com observadores independentes. Prefixo gerado e `current_database()` precisam coincidir antes de migrar e limpar. A CLI financeira recebe também nome esperado e URL explícita; nome divergente é recusado antes da migration. Sem alvo confirmado, não se autoriza limpeza. Logs de teste mostram apenas nomes dos bancos, sem URLs ou credenciais.
@@ -64,8 +64,23 @@ O ensaio técnico preserva bootstrap NestJS/Bun, migrations reversíveis, commit
 
 A suíte de autenticação verifica ausência de identidade fabricada, acesso com NoAuthGuard e health público mesmo quando esse provider recusa a rota de ensaio. Não demonstra autenticação real nem vínculo entre providerId e credenciais.
 
+### WIN/LOSS e referências opcionais persistentes
+
+`tests/integration/win-loss.test.ts` reutiliza o harness `bet_validation_<uuid>`, PostgreSQL real, migrations e observador independente. `tests/unit/win-loss.test.ts` verifica contrato, estados, referência e o vetor literal de hash calculado antes de alterar a base 03.
+
+- WIN com centésimos exatos produz um CREDIT e dois eventos. Cinquenta duplicatas produzem um único crédito. LOSS zero/positiva produz somente WagerTransactionProcessed, com payload/correlação verificados, sem mudar saldo, versão, data ou ledger. Replay preserva o saldo observado após outra movimentação.
+- Referência BET processada permite valor e jogo diferentes e múltiplas WIN. Consultas e reidratação preservam IDs externo/interno. Ausência e BET PENDING geram pendência; referência conhecida guarda ID mesmo pendente/rejeitada. BET rejeitada, kind inelegível, contexto incompatível, namespace de provedor e autorreferência têm resultados distintos sem crédito.
+- Fixture válida USD, com Wallet própria e mesmo jogador, demonstra incompatibilidade sem afrouxar FKs. WIN/LOSS pendente como referência é rejeitada pelo kind antes do estado. BET PENDING_REFERENCE não é produzida no contrato atual; FAILED permanece inalcançável e sem fixture artificial.
+- Chegar exatamente ao teto é permitido; um centésimo excedente produz rejeição auditável e replay estável. Estado da Wallet fica preservado na rejeição e na pendência. Replay pendente não reprocessa depois que a BET aparece, não emite outro evento e mantém o snapshot original.
+- Falha injetada após cada escrita real de WIN, LOSS, pendência e rejeição deixa zero efeito parcial observado antes do commit e após rollback. Erro SQL real `42703` na consulta da referência desfaz o claim e não produz pendência.
+- SQL direto exige SQLSTATE/constraint para limites, referência vazia/autorreferência, FK, estados inválidos e failureCode ausente. Migration 05 reverte/reaplica preservando OPENING/BET e ledger imutável; down com WIN existente falha atomicamente e conserva dados.
+- O harness de três subprocessos de BET recebe cinquenta duplicatas de cada WIN/LOSS/pendência (150 chamadas), confirma apenas três execuções originais e disputa mais três créditos no teto: um processado, dois rejeitados, saldo e soma do ledger no teto. Mantidas as provas anteriores de cinquenta BET e disputa 80/100.
+- Poucos percursos HTTP comprovam 201/200 para aplicado/replay, 202 para pendente/replay, GET 200, 422 para rejeição/replay, 400 para WIN zero e referência null.
+
+O worker de referências, TTL, backoff, SQS, publicação e recuperação após crash não são demonstrados por essas provas. Persistência da pendência e intenção de evento não equivalem a reprocessamento ou publicação.
+
 ## Limites e continuidade
 
-Ainda não foram demonstrados: WIN/LOSS/REFUND/ROLLBACK persistentes, consultas de ledger/reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
+Ainda não foram demonstrados: REFUND/ROLLBACK persistentes, worker de referências, consultas de ledger/reconciliação, inbox, SQS, ack, retry/DLQ, publishers concorrentes e recuperação após crash. A outbox guarda somente intenção pendente; nenhum evento foi publicado neste ticket. Readiness, métricas e logs operacionais completos permanecem pendentes.
 
 Para os próximos tickets, preservar as evidências de BET e ampliar os cenários com referências fora de ordem, reversões e recuperação. Em cada cenário financeiro, conferir saldo reconstruído pelo ledger e ausência de efeitos extras. Mocks não substituem PostgreSQL ou SQS reais. Indisponibilidade de infraestrutura deve ser informada como cenário não verificado.

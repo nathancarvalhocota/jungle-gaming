@@ -1,12 +1,14 @@
 # Fluxo financeiro persistente
 
-Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva e BET idempotente foram implementadas; BET aguarda revisão independente do maestro. O usuário autorizou o maestro a revisar, validar, commitar e delegar o próximo ticket sem nova aprovação rotineira; cada implementação continua isolada e depende da delegação do maestro.
+Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva e BET idempotente foram revisadas e commitadas; WIN/LOSS aguardam revisão independente do maestro. O usuário autorizou o maestro a revisar, validar, commitar e delegar o próximo ticket sem nova aprovação rotineira; cada implementação continua isolada e depende da delegação do maestro.
+
+WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas confirmadas, alternativas e limites estão em [arquitetura](../architecture.md#win-loss-e-referências-opcionais). Persistir PENDING_REFERENCE não implementa o worker de reprocessamento.
 
 ## Problema
 
 Os provedores precisam submeter operações financeiras sem cobrar uma aposta duas vezes, perder créditos ou produzir saldo negativo quando houver reenvios, falhas e processamento concorrente. O operador precisa consultar um resultado auditável e conferir o saldo contra o ledger.
 
-Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET. Os demais kinds, ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md).
+Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS. REFUND, ROLLBACK, ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md).
 
 ## Solução
 
@@ -144,13 +146,13 @@ As escolhas abaixo precisam ser resolvidas antes do ticket que depende delas. N�
 
 | Pendência | Impacto |
 | --- | --- |
-| Opcionais e novos campos nos próximos kinds | BET tem hash e contrato fechado, sem opcionais nem conteúdo desconhecido; rever o hash ao ampliar o contrato |
-| Transições, failureCodes e HTTP dos demais kinds | BET já distingue processamento, rejeição, conflito, contrato inválido e falha transitória |
-| Zero nos demais kinds, WIN com referência opcional e referências pendentes/rejeitadas | BET zero retorna 400 sem persistência; demais políticas permanecem pendentes |
+| Opcionais nos próximos kinds | BET preserva hash original; WIN/LOSS incluem referência somente quando informada. REFUND/ROLLBACK ainda dependem dos tickets próprios |
+| Transições, failureCodes e HTTP dos demais kinds | BET/WIN/LOSS distinguem processamento, rejeição e pendência; FAILED e reversões permanecem futuros |
+| Zero nos demais kinds | BET/WIN zero retornam 400; LOSS aceita zero informativo. Reversões permanecem pendentes |
 | REFUND e ROLLBACK sobre a mesma BET e reversões de operações já compensadas | Interpretação adicional além da proibição explícita de repetição pelo mesmo tipo |
 | Ordem dos locks de referências e reversões | BET fixa uma Wallet antes do claim, READ COMMITTED, limites de 5s por lock/15s por comando, sem retry automático, e traduz conflito externo após rollback |
 | Identificadores e metadados internos de OPENING — resolvido | UUID interno, origem INTERNAL e campos externos ausentes; unicidades externas não usam sentinelas |
-| Resultado consultável de PENDING_REFERENCE e sua evolução posterior | Não confundir leitura de estado com reaplicação financeira em replay |
+| Evolução posterior de PENDING_REFERENCE | Snapshot persistido e replay sem reprocessar estão implementados; worker, TTL e backoff permanecem pendentes |
 | Snapshot da reconciliação, valores reconstruídos fora do teto e cursor/limites de paginação | Consistência das consultas e exatidão mesmo ao detectar corrupção |
 | Destino e políticas dos futuros workers | Publicação, reprocessamento e recuperação são obrigatórios na continuidade |
 

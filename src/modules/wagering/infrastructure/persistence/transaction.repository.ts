@@ -60,6 +60,9 @@ export class TransactionRepository
         roundId: transaction.roundId,
         gameId: transaction.gameId,
         failureCode: null,
+        referenceExternalTransactionId:
+          transaction.referenceExternalTransactionId ?? null,
+        referenceTransactionId: null,
       })
       .onConflict("idempotencyKey")
       .ignore()
@@ -77,6 +80,7 @@ export class TransactionRepository
           : null,
         processedAt: transaction.processedAt ?? null,
         failureCode: transaction.failureCode ?? null,
+        referenceTransactionId: transaction.referenceTransactionId ?? null,
       })
       .where({ id: transaction.id })
       .execute();

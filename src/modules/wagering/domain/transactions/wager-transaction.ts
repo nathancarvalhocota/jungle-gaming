@@ -35,8 +35,20 @@ export interface ExternalTransactionIdentity {
 }
 
 export type CreateBetProps = CreateOpeningProps & ExternalTransactionIdentity;
+export type ExternalTransactionKind =
+  | WagerTransactionKind.Bet
+  | WagerTransactionKind.Win
+  | WagerTransactionKind.Loss;
+export type CreateExternalProps = CreateBetProps & {
+  kind: ExternalTransactionKind;
+  referenceExternalTransactionId?: string;
+};
 export enum FailureCode {
   InsufficientFunds = "INSUFFICIENT_FUNDS",
+  ReferenceKindMismatch = "REFERENCE_KIND_MISMATCH",
+  ReferenceContextMismatch = "REFERENCE_CONTEXT_MISMATCH",
+  ReferenceNotProcessed = "REFERENCE_NOT_PROCESSED",
+  BalanceLimitExceeded = "BALANCE_LIMIT_EXCEEDED",
 }
 
 export interface WagerTransactionState {
@@ -45,11 +57,14 @@ export interface WagerTransactionState {
   playerId: string;
   money: Money;
   origin: "INTERNAL" | "EXTERNAL";
-  kind: WagerTransactionKind.Opening | WagerTransactionKind.Bet;
+  kind: WagerTransactionKind.Opening | ExternalTransactionKind;
+  referenceExternalTransactionId?: string;
+  referenceTransactionId?: string;
   external?: ExternalTransactionIdentity;
   failureCode?: FailureCode;
   status:
     | WagerTransactionStatus.Pending
+    | WagerTransactionStatus.PendingReference
     | WagerTransactionStatus.Processed
     | WagerTransactionStatus.Rejected;
   balance: Money | undefined;
@@ -78,6 +93,8 @@ export class WagerTransaction {
   declare readonly roundId: string | undefined;
   declare readonly gameId: string | undefined;
   readonly money: Money;
+  readonly referenceExternalTransactionId: string | undefined;
+  #referenceTransactionId: string | undefined;
   readonly #createdAt: number;
   #status: WagerTransactionState["status"];
   #balance: Money | undefined;
@@ -99,7 +116,11 @@ export class WagerTransaction {
         );
     } else if (
       state.origin === "EXTERNAL" &&
-      state.kind === WagerTransactionKind.Bet &&
+      [
+        WagerTransactionKind.Bet,
+        WagerTransactionKind.Win,
+        WagerTransactionKind.Loss,
+      ].includes(state.kind) &&
       state.external
     ) {
       for (const field of [
@@ -131,8 +152,29 @@ export class WagerTransaction {
       throw new WagerTransactionError(
         "Unsupported transaction origin and kind",
       );
-    if (!(state.money instanceof Money) || !state.money.isPositive())
-      throw new WagerTransactionError("Transaction money must be positive");
+    if (
+      !(state.money instanceof Money) ||
+      state.money.isNegative() ||
+      (state.kind !== WagerTransactionKind.Loss && !state.money.isPositive())
+    )
+      throw new WagerTransactionError("Invalid transaction money");
+    if (
+      state.referenceExternalTransactionId !== undefined &&
+      (typeof state.referenceExternalTransactionId !== "string" ||
+        !state.referenceExternalTransactionId.trim() ||
+        ![WagerTransactionKind.Win, WagerTransactionKind.Loss].includes(
+          state.kind,
+        ))
+    )
+      throw new WagerTransactionError("Invalid external reference");
+    if (
+      state.referenceTransactionId !== undefined &&
+      (typeof state.referenceTransactionId !== "string" ||
+        !state.referenceTransactionId.trim() ||
+        !state.referenceExternalTransactionId ||
+        state.referenceTransactionId === state.id)
+    )
+      throw new WagerTransactionError("Invalid resolved reference");
     assertDate(state.createdAt);
     if (
       state.status === WagerTransactionStatus.Processed ||
@@ -149,17 +191,38 @@ export class WagerTransaction {
       assertDate(state.processedAt);
       if (state.status === WagerTransactionStatus.Rejected) {
         if (
-          state.kind !== WagerTransactionKind.Bet ||
-          state.failureCode !== FailureCode.InsufficientFunds ||
-          !state.balance.isLessThan(state.money)
+          !validRejection(
+            state.kind,
+            state.failureCode,
+            state.money,
+            state.balance,
+            state.referenceExternalTransactionId,
+          )
         )
-          throw new WagerTransactionError("Invalid BET rejection");
+          throw new WagerTransactionError("Invalid transaction rejection");
       } else if (state.failureCode !== undefined)
         throw new WagerTransactionError("Processed transaction has no failure");
+      if (
+        state.status === WagerTransactionStatus.Processed &&
+        state.referenceExternalTransactionId &&
+        !state.referenceTransactionId
+      )
+        throw new WagerTransactionError("Processed reference must be resolved");
+    } else if (state.status === WagerTransactionStatus.PendingReference) {
+      if (
+        !state.referenceExternalTransactionId ||
+        !(state.balance instanceof Money) ||
+        state.balance.isNegative() ||
+        state.balance.currency !== state.money.currency ||
+        state.processedAt !== undefined ||
+        state.failureCode !== undefined
+      )
+        throw new WagerTransactionError("Invalid pending reference result");
     } else if (
       state.status !== WagerTransactionStatus.Pending ||
       state.balance !== undefined ||
       state.processedAt !== undefined ||
+      state.referenceTransactionId !== undefined ||
       state.failureCode !== undefined
     ) {
       throw new WagerTransactionError("Invalid transaction state");
@@ -170,6 +233,8 @@ export class WagerTransaction {
     this.money = state.money;
     this.origin = state.origin;
     this.kind = state.kind;
+    this.referenceExternalTransactionId = state.referenceExternalTransactionId;
+    this.#referenceTransactionId = state.referenceTransactionId;
     this.#status = state.status;
     this.#balance = state.balance;
     this.#createdAt = state.createdAt.getTime();
@@ -195,10 +260,17 @@ export class WagerTransaction {
   }
 
   static createBet(props: CreateBetProps): WagerTransaction {
+    return WagerTransaction.createExternal({
+      ...props,
+      kind: WagerTransactionKind.Bet,
+    });
+  }
+
+  static createExternal(props: CreateExternalProps): WagerTransaction {
     return new WagerTransaction({
       ...props,
       origin: "EXTERNAL",
-      kind: WagerTransactionKind.Bet,
+      kind: props.kind,
       external: {
         providerId: props.providerId,
         externalTransactionId: props.externalTransactionId,
@@ -218,7 +290,11 @@ export class WagerTransaction {
     return new WagerTransaction(state);
   }
 
-  markProcessed(balance: Money, at: Date): void {
+  markProcessed(
+    balance: Money,
+    at: Date,
+    referenceTransactionId?: string,
+  ): void {
     if (this.isTerminal())
       throw new InvalidTransactionStateError(
         "A terminal transaction cannot transition",
@@ -232,6 +308,8 @@ export class WagerTransaction {
         !balance.equals(this.money))
     )
       throw new WagerTransactionError("Invalid transaction result");
+    this.assertReference(referenceTransactionId, true);
+    this.#referenceTransactionId = referenceTransactionId;
     this.#balance = balance;
     this.#processedAt = at.getTime();
     this.#status = WagerTransactionStatus.Processed;
@@ -243,21 +321,32 @@ export class WagerTransaction {
       this.#status === WagerTransactionStatus.Rejected
     );
   }
-  reject(code: FailureCode, balance: Money, at: Date): void {
+  reject(
+    code: FailureCode,
+    balance: Money,
+    at: Date,
+    referenceTransactionId?: string,
+  ): void {
     if (this.isTerminal())
       throw new InvalidTransactionStateError(
         "A terminal transaction cannot transition",
       );
     assertDate(at);
     if (
-      this.kind !== WagerTransactionKind.Bet ||
-      code !== FailureCode.InsufficientFunds ||
       !(balance instanceof Money) ||
       balance.isNegative() ||
       balance.currency !== this.money.currency ||
-      !balance.isLessThan(this.money)
+      !validRejection(
+        this.kind,
+        code,
+        this.money,
+        balance,
+        this.referenceExternalTransactionId,
+      )
     )
-      throw new WagerTransactionError("Invalid BET rejection");
+      throw new WagerTransactionError("Invalid transaction rejection");
+    this.assertReference(referenceTransactionId, false);
+    this.#referenceTransactionId = referenceTransactionId;
     this.#status = WagerTransactionStatus.Rejected;
     this.#failureCode = code;
     this.#balance = balance;
@@ -265,6 +354,56 @@ export class WagerTransaction {
   }
   matchesPayload(hash: string): boolean {
     return this.payloadHash === hash;
+  }
+  markPendingReference(balance: Money, referenceTransactionId?: string): void {
+    if (this.isTerminal())
+      throw new InvalidTransactionStateError(
+        "A terminal transaction cannot transition",
+      );
+    if (
+      !this.referenceExternalTransactionId ||
+      !(balance instanceof Money) ||
+      balance.isNegative() ||
+      balance.currency !== this.money.currency
+    )
+      throw new WagerTransactionError("Invalid pending reference result");
+    this.assertReference(referenceTransactionId, false);
+    this.#status = WagerTransactionStatus.PendingReference;
+    this.#balance = balance;
+    this.#referenceTransactionId = referenceTransactionId;
+  }
+  referenceFailure(reference: WagerTransaction): FailureCode | undefined {
+    if (
+      this.referenceExternalTransactionId !== reference.externalTransactionId ||
+      this.id === reference.id ||
+      this.providerId !== reference.providerId ||
+      this.playerId !== reference.playerId ||
+      this.walletId !== reference.walletId ||
+      this.money.currency !== reference.money.currency ||
+      this.roundId !== reference.roundId
+    )
+      return FailureCode.ReferenceContextMismatch;
+    if (reference.kind !== WagerTransactionKind.Bet)
+      return FailureCode.ReferenceKindMismatch;
+    if (reference.status === WagerTransactionStatus.Rejected)
+      return FailureCode.ReferenceNotProcessed;
+    return undefined;
+  }
+  private assertReference(id: string | undefined, processed: boolean): void {
+    if (
+      (id !== undefined &&
+        (typeof id !== "string" ||
+          !id.trim() ||
+          id === this.id ||
+          !this.referenceExternalTransactionId)) ||
+      (processed &&
+        this.referenceExternalTransactionId !== undefined &&
+        id === undefined)
+    )
+      throw new WagerTransactionError("Invalid resolved reference");
+  }
+  get referenceTransactionId(): string | undefined {
+    return this.#referenceTransactionId;
   }
   get failureCode(): FailureCode | undefined {
     return this.#failureCode;
@@ -283,6 +422,34 @@ export class WagerTransaction {
       ? undefined
       : new Date(this.#processedAt);
   }
+}
+
+function validRejection(
+  kind: WagerTransactionState["kind"],
+  code: FailureCode | undefined,
+  money: Money,
+  balance: Money,
+  reference: string | undefined,
+): boolean {
+  if (kind === WagerTransactionKind.Bet)
+    return code === FailureCode.InsufficientFunds && balance.isLessThan(money);
+  if (kind !== WagerTransactionKind.Win && kind !== WagerTransactionKind.Loss)
+    return false;
+  if (code === FailureCode.BalanceLimitExceeded)
+    return (
+      kind === WagerTransactionKind.Win &&
+      BigInt(balance.toJSON().amount.replace(".", "")) +
+        BigInt(money.toJSON().amount.replace(".", "")) >
+        Money.MAX_MINOR_UNITS
+    );
+  return (
+    reference !== undefined &&
+    [
+      FailureCode.ReferenceKindMismatch,
+      FailureCode.ReferenceContextMismatch,
+      FailureCode.ReferenceNotProcessed,
+    ].includes(code as FailureCode)
+  );
 }
 
 function assertDate(value: unknown): asserts value is Date {

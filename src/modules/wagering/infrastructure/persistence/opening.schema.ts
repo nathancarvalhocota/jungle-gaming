@@ -25,6 +25,14 @@ export const WagerTransactionSchema = defineEntity({
     roundId: p.text().nullable().fieldName("round_id"),
     gameId: p.text().nullable().fieldName("game_id"),
     failureCode: p.text().nullable().fieldName("failure_code"),
+    referenceExternalTransactionId: p
+      .text()
+      .nullable()
+      .fieldName("reference_external_transaction_id"),
+    referenceTransactionId: p
+      .uuid()
+      .nullable()
+      .fieldName("reference_transaction_id"),
   },
 });
 export type WagerTransactionRecord = InferEntity<typeof WagerTransactionSchema>;

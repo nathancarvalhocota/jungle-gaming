@@ -20,6 +20,7 @@ src/
           integration-event.ts
           opening-events.ts
           transaction-rejected.ts
+          transaction-pending-reference.ts
           outbox-message.ts
       application/
         wallet-ports.ts
@@ -37,6 +38,7 @@ src/
         migrations/migration-202610250002-wallet-zero.ts
         migrations/migration-202610250003-auditable-opening.ts
         migrations/migration-202610250004-idempotent-bet.ts
+        migrations/migration-202610260005-win-loss-references.ts
       presentation/
         wallet.controller.ts
         wallet-http-error.filter.ts
@@ -58,11 +60,13 @@ tests/
     wallet-http-error.filter.test.ts
     auditable-opening.test.ts
     bet.test.ts
+    win-loss.test.ts
   integration/
     auth.test.ts
     stack.test.ts
     wallet.test.ts
     bet.test.ts
+    win-loss.test.ts
   support/
     run-tests.ts
     bet-database.ts
@@ -79,8 +83,8 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
-| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET e portas transacionais |
-| `src/modules/wagering/domain/transactions` | OPENING interna/BET externa, resultados processado/rejeitado e reidratação |
+| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET/WIN/LOSS e portas transacionais |
+| `src/modules/wagering/domain/transactions` | OPENING interna e BET/WIN/LOSS externas, resultados, referências e reidratação |
 | `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
 | `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
@@ -91,7 +95,9 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. Wallet e BET possuem HTTP, persistência, ledger e outbox atômicos. Demais kinds e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
+O Compose fica na raiz em `compose.yaml`. Wallet e BET/WIN/LOSS possuem HTTP e persistência atômica com ledger quando há movimento e outbox. Reversões e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
+
+WIN/LOSS ampliam o mesmo caso de uso, entidade e repositório de transações. O evento concreto de pendência está em `domain/events/transaction-pending-reference.ts`; a migration incremental mantém as anteriores. `tests/unit/win-loss.test.ts` e `tests/integration/win-loss.test.ts` cobrem as novas políticas; `bet.test.ts` reaproveita a barreira e os três subprocessos para WIN/LOSS/pendência e disputa do teto. Workers de referências continuam pendentes.
 
 ## Organização por funcionalidade
 
@@ -132,7 +138,7 @@ Dentro da funcionalidade, `domain` concentra regras e estados; `application`, ca
 
 As migrations, unidade de trabalho, schemas de Wallet, OPENING, ledger e outbox estão em `wagering/infrastructure/persistence`; inbox e publicação continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
 
-Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. Demais kinds externos e inbox continuam pendentes, conforme [arquitetura](architecture.md).
+Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. REFUND, ROLLBACK e inbox continuam pendentes, conforme [arquitetura](architecture.md).
 
 ## Documentação
 

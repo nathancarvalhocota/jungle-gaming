@@ -77,6 +77,9 @@ export class WalletRepository {
         roundId: transaction.roundId ?? null,
         gameId: transaction.gameId ?? null,
         failureCode: transaction.failureCode ?? null,
+        referenceExternalTransactionId:
+          transaction.referenceExternalTransactionId ?? null,
+        referenceTransactionId: transaction.referenceTransactionId ?? null,
       }),
     );
     await this.em.flush();
@@ -88,12 +91,15 @@ export class WalletRepository {
     if (
       (record.origin !== "INTERNAL" && record.origin !== "EXTERNAL") ||
       (record.kind !== WagerTransactionKind.Opening &&
-        record.kind !== WagerTransactionKind.Bet) ||
+        record.kind !== WagerTransactionKind.Bet &&
+        record.kind !== WagerTransactionKind.Win &&
+        record.kind !== WagerTransactionKind.Loss) ||
       (record.status !== WagerTransactionStatus.Pending &&
         record.status !== WagerTransactionStatus.Processed &&
-        record.status !== WagerTransactionStatus.Rejected) ||
+        record.status !== WagerTransactionStatus.Rejected &&
+        record.status !== WagerTransactionStatus.PendingReference) ||
       (record.failureCode != null &&
-        record.failureCode !== FailureCode.InsufficientFunds)
+        !Object.values(FailureCode).includes(record.failureCode as FailureCode))
     )
       throw new Error("Unsupported stored transaction");
     return WagerTransaction.rehydrate({
@@ -114,7 +120,10 @@ export class WalletRepository {
             },
           }
         : {}),
-      failureCode: record.failureCode ?? undefined,
+      failureCode: (record.failureCode as FailureCode | null) ?? undefined,
+      referenceExternalTransactionId:
+        record.referenceExternalTransactionId ?? undefined,
+      referenceTransactionId: record.referenceTransactionId ?? undefined,
       status: record.status,
       money: readMoney(record.moneyMinorUnits, record.currency),
       balance:

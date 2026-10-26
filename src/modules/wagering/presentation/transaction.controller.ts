@@ -23,11 +23,13 @@ export class TransactionController {
   ) {
     const result = await this.useCases.submit(body, key);
     response.status(
-      result.status === WagerTransactionStatus.Rejected
-        ? 422
-        : result.idempotentReplay
-          ? 200
-          : 201,
+      result.status === WagerTransactionStatus.PendingReference
+        ? 202
+        : result.status === WagerTransactionStatus.Rejected
+          ? 422
+          : result.idempotentReplay
+            ? 200
+            : 201,
     );
     return result;
   }
