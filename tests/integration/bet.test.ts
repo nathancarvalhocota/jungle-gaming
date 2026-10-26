@@ -92,11 +92,13 @@ describe("BET persistente, idempotente e concorrente", () => {
     await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(2);
     await assertState(w.id, "10000", 0, 0, 0);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(5);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(6);
   });
   test("50 reenvios simultâneos debitam uma vez e replay guarda saldo original após outra movimentação", async () => {
     const w = await wallet();
@@ -461,6 +463,8 @@ describe("BET persistente, idempotente e concorrente", () => {
       code: "23505",
       constraint: "transactions_external_identity_unique",
     });
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);

@@ -7,6 +7,7 @@ import { Migration202610250003AuditableOpening } from "../../modules/wagering/in
 import { Migration202610250004IdempotentBet } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610250004-idempotent-bet.ts";
 import { Migration202610260005WinLossReferences } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610260005-win-loss-references.ts";
 import { Migration202610260006Refund } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610260006-refund.ts";
+import { Migration202610260007Rollback } from "../../modules/wagering/infrastructure/persistence/migrations/migration-202610260007-rollback.ts";
 import {
   OutboxMessageSchema,
   WagerTransactionSchema,
@@ -44,6 +45,7 @@ export function createOrmOptions(): ReturnType<
         Migration202610250004IdempotentBet,
         Migration202610260005WinLossReferences,
         Migration202610260006Refund,
+        Migration202610260007Rollback,
       ],
       snapshot: false,
     },

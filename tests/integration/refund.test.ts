@@ -18,6 +18,7 @@ import {
   assertBetDatabase,
   createBetDatabase,
 } from "../support/bet-database.ts";
+import { processWorker } from "../support/transaction-process.ts";
 
 describe("REFUND integral in PostgreSQL", () => {
   let db: Awaited<ReturnType<typeof createBetDatabase>>;
@@ -93,68 +94,6 @@ describe("REFUND integral in PostgreSQL", () => {
       events,
     });
   }
-  function processWorker(jobs: { body: unknown; key: string }[]) {
-    let readyResolve: (pid: number) => void;
-    let resultResolve: (value: WorkerResult[]) => void;
-    let readyReject: (error: Error) => void;
-    let resultReject: (error: Error) => void;
-    let readyReceived = false;
-    let resultReceived = false;
-    const ready = new Promise<number>((resolve, reject) => {
-      readyResolve = resolve;
-      readyReject = reject;
-    });
-    const result = new Promise<WorkerResult[]>((resolve, reject) => {
-      resultResolve = resolve;
-      resultReject = reject;
-    });
-    const child = Bun.spawn(
-      [process.execPath, "run", "tests/support/bet-process.ts"],
-      {
-        env: {
-          ...process.env,
-          DATABASE_URL: db.url,
-          BET_DATABASE_URL: db.url,
-          BET_EXPECTED_DATABASE: db.name,
-          BET_JOBS: JSON.stringify(jobs),
-        },
-        stdout: "ignore",
-        stderr: "inherit",
-        ipc(message: unknown) {
-          if (!message || typeof message !== "object") return;
-          if (
-            "type" in message &&
-            message.type === "ready" &&
-            "pid" in message &&
-            typeof message.pid === "number"
-          ) {
-            readyReceived = true;
-            readyResolve(message.pid);
-          }
-          if (
-            "type" in message &&
-            message.type === "result" &&
-            "results" in message &&
-            Array.isArray(message.results)
-          ) {
-            resultReceived = true;
-            resultResolve(message.results);
-          }
-        },
-      },
-    );
-    void child.exited.then((code) => {
-      if (code !== 0 || !readyReceived || !resultReceived) {
-        const error = new Error(`BET worker failed (${code})`);
-        if (!readyReceived) readyReject(error);
-        if (!resultReceived) resultReject(error);
-      }
-    });
-    return { child, ready, result };
-  }
-  type WorkerResult =
-    | { error: string }
-    | { result: { balance: { amount: string }; idempotentReplay: boolean } };
   async function refundTarget(amount = "25.37", initial = "100.00") {
     const w = await wallet(initial);
     const bet = input(w, "BET", amount);
@@ -172,13 +111,17 @@ describe("REFUND integral in PostgreSQL", () => {
     await useCases.submit(input(w, "LOSS", "0.00"), randomUUID());
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.down();
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     expect(await db.orm.migrator.getExecuted()).toHaveLength(4);
     await state(w.id, "7464", 3, 3, 2, 5);
     await assertBetDatabase(db.orm, db.url, db.name);
     await db.orm.migrator.up();
-    expect(await db.orm.migrator.getExecuted()).toHaveLength(5);
+    expect(await db.orm.migrator.getExecuted()).toHaveLength(6);
     const target = await refundTarget();
     await useCases.submit(target.refund, randomUUID());
+    await assertBetDatabase(db.orm, db.url, db.name);
+    await db.orm.migrator.down();
     await assertBetDatabase(db.orm, db.url, db.name);
     await expect(db.orm.migrator.down()).rejects.toMatchObject({
       code: "23514",
@@ -464,7 +407,7 @@ describe("REFUND integral in PostgreSQL", () => {
   test("three independent processes compete with distinct IDs/keys for one reference", async () => {
     const { w, refund } = await refundTarget();
     const workers = Array.from({ length: 3 }, () =>
-      processWorker([
+      processWorker(db, [
         {
           body: { ...refund, externalTransactionId: randomUUID() },
           key: randomUUID(),
@@ -664,7 +607,6 @@ describe("REFUND integral in PostgreSQL", () => {
         noReference,
         { ...refund, referenceExternalTransactionId: null },
         { ...refund, money: { amount: "0.00", currency: "BRL" } },
-        { ...refund, kind: "ROLLBACK" },
       ])
         expect((await post(body, randomUUID())).status).toBe(400);
       await state(w.id, "10000", 3, 5, 2, 7);

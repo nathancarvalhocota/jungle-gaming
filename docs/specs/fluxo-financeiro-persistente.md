@@ -1,6 +1,6 @@
 # Fluxo financeiro persistente
 
-Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva, BET idempotente e WIN/LOSS foram revisadas e commitadas; REFUND aguarda revisão independente. O trabalho está congelado no ticket 05, sem continuidade automática para os tickets seguintes.
+Estado: especificação de integração com execução incremental. Wallet zero, abertura positiva, BET idempotente, WIN/LOSS e REFUND compõem a base `4a5ae90`; ROLLBACK está implementado para revisão independente. A entrega se limita ao ticket 06, sem autorização para iniciar 07/08.
 
 WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas confirmadas, alternativas e limites estão em [arquitetura](../architecture.md#win-loss-e-referências-opcionais). Persistir PENDING_REFERENCE não implementa o worker de reprocessamento.
 
@@ -8,7 +8,7 @@ WIN/LOSS e referências opcionais usam a mesma API e transação SQL. Políticas
 
 Os provedores precisam submeter operações financeiras sem cobrar uma aposta duas vezes, perder créditos ou produzir saldo negativo quando houver reenvios, falhas e processamento concorrente. O operador precisa consultar um resultado auditável e conferir o saldo contra o ledger.
 
-Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND. ROLLBACK, ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md). REFUND integral segue as políticas aceitas de [arquitetura](../architecture.md#refund-integral).
+Existem bootstrap, extensão de autenticação, domínio financeiro, schema, repositórios, unidade de trabalho e HTTP para Wallet, abertura auditável e BET/WIN/LOSS/REFUND/ROLLBACK. Ledger paginado e reconciliação permanecem pendentes; evidências reais estão em [testes](../testing.md). Reversões integrais seguem as políticas aceitas de [REFUND](../architecture.md#refund-integral) e [ROLLBACK](../architecture.md#rollback-integral).
 
 ## Solução
 
@@ -146,11 +146,11 @@ As escolhas abaixo precisam ser resolvidas antes do ticket que depende delas. N�
 
 | Pendência | Impacto |
 | --- | --- |
-| Opcionais nos próximos kinds | BET preserva hash original; WIN/LOSS incluem referência somente quando informada. REFUND exige referência e a inclui no hash; ROLLBACK depende do ticket próprio |
-| Transições, failureCodes e HTTP dos demais kinds | BET/WIN/LOSS/REFUND distinguem processamento, rejeição e pendência; FAILED e ROLLBACK permanecem futuros |
-| Zero nos demais kinds | BET/WIN/REFUND zero retornam 400; LOSS aceita zero informativo. ROLLBACK permanece pendente |
-| Compensações diretas — resolvido | No máximo uma PROCESSED por referência entre REFUND/ROLLBACK; REFUND integral implementada, ROLLBACK pendente. Reverter uma REFUND futuramente não reabre a BET |
-| Ordem dos locks — resolvido para REFUND | Wallet antes de claim/referência, sem outro lock na referência; consulta de compensações no mesmo contexto. READ COMMITTED e limites existentes; conflito específico do índice só após rollback produz 503, sem retry interno |
+| Referências — resolvido | BET preserva hash original; WIN/LOSS incluem referência somente quando informada. REFUND/ROLLBACK exigem referência e a incluem no hash |
+| Transições, failureCodes e HTTP | BET/WIN/LOSS/REFUND/ROLLBACK distinguem processamento, rejeição e pendência; FAILED permanece inalcançável. Débito inverso sem saldo gera REVERSAL_INSUFFICIENT_FUNDS |
+| Zero — resolvido | BET/WIN/REFUND/ROLLBACK zero retornam 400; LOSS aceita zero informativo |
+| Compensações diretas — resolvido | No máximo uma PROCESSED por referência entre REFUND/ROLLBACK. ROLLBACK inverte BET/WIN/REFUND processada com valor exato; reverter REFUND não reabre a BET |
+| Ordem dos locks — resolvido para reversões | Wallet antes de claim/referência, sem outro lock na referência; consulta de compensações no mesmo contexto. READ COMMITTED e limites existentes; conflito específico do índice só após rollback produz 503, sem retry interno |
 | Identificadores e metadados internos de OPENING — resolvido | UUID interno, origem INTERNAL e campos externos ausentes; unicidades externas não usam sentinelas |
 | Evolução posterior de PENDING_REFERENCE | Snapshot persistido e replay sem reprocessar estão implementados; worker, TTL e backoff permanecem pendentes |
 | Snapshot da reconciliação, valores reconstruídos fora do teto e cursor/limites de paginação | Consistência das consultas e exatidão mesmo ao detectar corrupção |

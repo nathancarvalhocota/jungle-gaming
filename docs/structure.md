@@ -40,6 +40,7 @@ src/
         migrations/migration-202610250004-idempotent-bet.ts
         migrations/migration-202610260005-win-loss-references.ts
         migrations/migration-202610260006-refund.ts
+        migrations/migration-202610260007-rollback.ts
       presentation/
         wallet.controller.ts
         wallet-http-error.filter.ts
@@ -63,6 +64,7 @@ tests/
     bet.test.ts
     win-loss.test.ts
     refund.test.ts
+    rollback.test.ts
   integration/
     auth.test.ts
     stack.test.ts
@@ -70,10 +72,12 @@ tests/
     bet.test.ts
     win-loss.test.ts
     refund.test.ts
+    rollback.test.ts
   support/
     run-tests.ts
     bet-database.ts
     bet-process.ts
+    transaction-process.ts
     stack/
       migration.ts
       probe.schema.ts
@@ -86,8 +90,8 @@ tests/
 | `src/modules/wagering/domain/money.ts` | Objeto de valor monetário puro, sem NestJS ou ORM |
 | `src/modules/wagering/domain/wallet` | Saldo e movimentações da carteira em memória |
 | `src/modules/wagering/domain/ledger` | Lançamento imutável e direção de débito/crédito |
-| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET/WIN/LOSS/REFUND e portas transacionais |
-| `src/modules/wagering/domain/transactions` | OPENING interna e BET/WIN/LOSS/REFUND externas, resultados, referências e reidratação |
+| `src/modules/wagering/application` | Criação/consulta de Wallet, abertura auditável, processamento/consulta de BET/WIN/LOSS/REFUND/ROLLBACK e portas transacionais |
+| `src/modules/wagering/domain/transactions` | OPENING interna e BET/WIN/LOSS/REFUND/ROLLBACK externas, resultados, referências e reidratação |
 | `src/modules/wagering/domain/events` | Envelope abstrato, eventos concretos de abertura e intenção persistida da outbox |
 | `src/modules/wagering/infrastructure/persistence` | Schema sem classe espelhada, reidratação, unidade de trabalho e migration de Wallet |
 | `src/modules/wagering/presentation` | HTTP e respostas de erro de Wallet |
@@ -98,11 +102,11 @@ tests/
 | `tests/integration` | Verificações com infraestrutura real |
 | `tests/support/stack` | Migration e schemas exclusivos do banco descartável de compatibilidade |
 
-O Compose fica na raiz em `compose.yaml`. Wallet e BET/WIN/LOSS/REFUND possuem HTTP e persistência atômica com ledger quando há movimento e outbox. ROLLBACK e publicação continuam pendentes. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
+O Compose fica na raiz em `compose.yaml`. Wallet e BET/WIN/LOSS/REFUND/ROLLBACK possuem HTTP e persistência atômica com ledger quando há movimento e outbox. Publicação continua pendente. `bun run db:migrate` e `bun run db:migrate:down` usam o banco configurado, sem execução automática no startup. `tests/support/run-tests.ts` isola a suíte completa em banco descartável desde a inicialização do executor.
 
 WIN/LOSS ampliam o mesmo caso de uso, entidade e repositório de transações. O evento concreto de pendência está em `domain/events/transaction-pending-reference.ts`; a migration incremental mantém as anteriores. `tests/unit/win-loss.test.ts` e `tests/integration/win-loss.test.ts` cobrem as novas políticas; `bet.test.ts` reaproveita a barreira e os três subprocessos para WIN/LOSS/pendência e disputa do teto. Workers de referências continuam pendentes.
 
-REFUND amplia a mesma entidade e o caso de uso; a consulta de compensações usa o repositório transacional. A migration incremental instala o índice único compartilhado com ROLLBACK, ainda não processado. Os testes próprios de REFUND cobrem o percurso completo sem repetir as matrizes anteriores.
+REFUND amplia a mesma entidade e o caso de uso; a consulta de compensações usa o repositório transacional. A migration incremental instala o índice único compartilhado com ROLLBACK, agora processado. Os testes próprios de REFUND cobrem o percurso completo sem repetir as matrizes anteriores. ROLLBACK amplia o mesmo fluxo e possui testes próprios; o helper IPC de REFUND foi extraído para compartilhar os três subprocessos seguros, sem duplicar a suíte.
 
 ## Organização por funcionalidade
 
@@ -143,7 +147,7 @@ Dentro da funcionalidade, `domain` concentra regras e estados; `application`, ca
 
 As migrations, unidade de trabalho, schemas de Wallet, OPENING, ledger e outbox estão em `wagering/infrastructure/persistence`; inbox e publicação continuam pendentes. A árvore não estabelece sozinha a fronteira transacional.
 
-Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. ROLLBACK e inbox continuam pendentes, conforme [arquitetura](architecture.md).
+Os schemas e conversões ficam em `wagering/infrastructure`, sem classes de domínio espelhadas. Inbox continua pendente, conforme [arquitetura](architecture.md).
 
 ## Documentação
 

@@ -1,3 +1,4 @@
+import { LedgerDirection } from "../ledger/wallet-ledger-entry.ts";
 import { Money } from "../money.ts";
 
 export enum WagerTransactionKind {
@@ -39,13 +40,15 @@ export type ExternalTransactionKind =
   | WagerTransactionKind.Bet
   | WagerTransactionKind.Win
   | WagerTransactionKind.Loss
-  | WagerTransactionKind.Refund;
+  | WagerTransactionKind.Refund
+  | WagerTransactionKind.Rollback;
 export type CreateExternalProps = CreateBetProps & {
   kind: ExternalTransactionKind;
   referenceExternalTransactionId?: string;
 };
 export enum FailureCode {
   InsufficientFunds = "INSUFFICIENT_FUNDS",
+  ReversalInsufficientFunds = "REVERSAL_INSUFFICIENT_FUNDS",
   ReferenceKindMismatch = "REFERENCE_KIND_MISMATCH",
   ReferenceContextMismatch = "REFERENCE_CONTEXT_MISMATCH",
   ReferenceNotProcessed = "REFERENCE_NOT_PROCESSED",
@@ -124,6 +127,7 @@ export class WagerTransaction {
         WagerTransactionKind.Win,
         WagerTransactionKind.Loss,
         WagerTransactionKind.Refund,
+        WagerTransactionKind.Rollback,
       ].includes(state.kind) &&
       state.external
     ) {
@@ -170,14 +174,17 @@ export class WagerTransaction {
           WagerTransactionKind.Win,
           WagerTransactionKind.Loss,
           WagerTransactionKind.Refund,
+          WagerTransactionKind.Rollback,
         ].includes(state.kind))
     )
       throw new WagerTransactionError("Invalid external reference");
     if (
-      state.kind === WagerTransactionKind.Refund &&
+      [WagerTransactionKind.Refund, WagerTransactionKind.Rollback].includes(
+        state.kind,
+      ) &&
       !state.referenceExternalTransactionId
     )
-      throw new WagerTransactionError("Refund requires a reference");
+      throw new WagerTransactionError("Reversal requires a reference");
     if (
       state.referenceTransactionId !== undefined &&
       (typeof state.referenceTransactionId !== "string" ||
@@ -394,17 +401,47 @@ export class WagerTransaction {
       this.roundId !== reference.roundId
     )
       return FailureCode.ReferenceContextMismatch;
-    if (reference.kind !== WagerTransactionKind.Bet)
+    if (
+      !(this.kind === WagerTransactionKind.Rollback
+        ? [
+            WagerTransactionKind.Bet,
+            WagerTransactionKind.Win,
+            WagerTransactionKind.Refund,
+          ].includes(reference.kind)
+        : reference.kind === WagerTransactionKind.Bet)
+    )
       return FailureCode.ReferenceKindMismatch;
     if (reference.status === WagerTransactionStatus.Rejected)
       return FailureCode.ReferenceNotProcessed;
     if (
-      this.kind === WagerTransactionKind.Refund &&
+      [WagerTransactionKind.Refund, WagerTransactionKind.Rollback].includes(
+        this.kind,
+      ) &&
       reference.status === WagerTransactionStatus.Processed &&
       !this.money.equals(reference.money)
     )
       return FailureCode.ReferenceAmountMismatch;
     return undefined;
+  }
+  ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection {
+    if (this.kind === WagerTransactionKind.Rollback) {
+      if (
+        !reference ||
+        reference.status !== WagerTransactionStatus.Processed ||
+        this.referenceFailure(reference)
+      )
+        throw new WagerTransactionError(
+          "Rollback requires an eligible processed reference",
+        );
+      return reference.kind === WagerTransactionKind.Bet
+        ? LedgerDirection.Credit
+        : LedgerDirection.Debit;
+    }
+    if (this.kind === WagerTransactionKind.Loss)
+      throw new WagerTransactionError("Loss has no ledger direction");
+    return this.kind === WagerTransactionKind.Bet
+      ? LedgerDirection.Debit
+      : LedgerDirection.Credit;
   }
   private assertReference(id: string | undefined, processed: boolean): void {
     if (
@@ -453,20 +490,30 @@ function validRejection(
   if (
     kind !== WagerTransactionKind.Win &&
     kind !== WagerTransactionKind.Loss &&
-    kind !== WagerTransactionKind.Refund
+    kind !== WagerTransactionKind.Refund &&
+    kind !== WagerTransactionKind.Rollback
   )
     return false;
+  if (code === FailureCode.ReversalInsufficientFunds)
+    return (
+      kind === WagerTransactionKind.Rollback &&
+      reference !== undefined &&
+      balance.isLessThan(money)
+    );
   if (code === FailureCode.BalanceLimitExceeded)
     return (
       (kind === WagerTransactionKind.Win ||
-        kind === WagerTransactionKind.Refund) &&
+        kind === WagerTransactionKind.Refund ||
+        kind === WagerTransactionKind.Rollback) &&
       BigInt(balance.toJSON().amount.replace(".", "")) +
         BigInt(money.toJSON().amount.replace(".", "")) >
         Money.MAX_MINOR_UNITS
     );
   return (
     reference !== undefined &&
-    ((kind === WagerTransactionKind.Refund &&
+    (([WagerTransactionKind.Refund, WagerTransactionKind.Rollback].includes(
+      kind,
+    ) &&
       [
         FailureCode.ReferenceAmountMismatch,
         FailureCode.ReferenceAlreadyReversed,

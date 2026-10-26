@@ -6,6 +6,7 @@ import {
 import { OutboxMessage } from "../domain/events/outbox-message.ts";
 import { WagerTransactionPendingReference } from "../domain/events/transaction-pending-reference.ts";
 import { WagerTransactionRejected } from "../domain/events/transaction-rejected.ts";
+import { LedgerDirection } from "../domain/ledger/wallet-ledger-entry.ts";
 import { Money } from "../domain/money.ts";
 import {
   FailureCode,
@@ -54,7 +55,9 @@ export class TransactionUseCases {
               ? WagerTransactionKind.Win
               : input.kind === "LOSS"
                 ? WagerTransactionKind.Loss
-                : WagerTransactionKind.Refund,
+                : input.kind === "REFUND"
+                  ? WagerTransactionKind.Refund
+                  : WagerTransactionKind.Rollback,
         money,
         id: randomUUID(),
         idempotencyKey: validated.key,
@@ -70,6 +73,7 @@ export class TransactionUseCases {
       let failure: FailureCode | undefined;
       let referenceId: string | undefined;
       let pendingReference = false;
+      let resolvedReference: WagerTransaction | undefined;
       if (input.referenceExternalTransactionId !== undefined) {
         if (
           input.referenceExternalTransactionId === input.externalTransactionId
@@ -82,6 +86,7 @@ export class TransactionUseCases {
           );
           if (!reference) pendingReference = true;
           else {
+            resolvedReference = reference;
             failure = transaction.referenceFailure(reference);
             if (failure !== FailureCode.ReferenceContextMismatch)
               referenceId = reference.id;
@@ -106,16 +111,27 @@ export class TransactionUseCases {
       }
       if (
         !failure &&
-        input.kind === "REFUND" &&
+        (input.kind === "REFUND" || input.kind === "ROLLBACK") &&
         referenceId &&
         (await repository.hasProcessedReversal(referenceId))
       )
         failure = FailureCode.ReferenceAlreadyReversed;
       if (!failure && input.kind === "BET" && wallet.balance.isLessThan(money))
         failure = FailureCode.InsufficientFunds;
+      const direction =
+        !failure && input.kind !== "LOSS"
+          ? transaction.ledgerDirectionFor(resolvedReference)
+          : undefined;
       if (
         !failure &&
-        (input.kind === "WIN" || input.kind === "REFUND") &&
+        input.kind === "ROLLBACK" &&
+        direction === LedgerDirection.Debit &&
+        wallet.balance.isLessThan(money)
+      )
+        failure = FailureCode.ReversalInsufficientFunds;
+      if (
+        !failure &&
+        direction === LedgerDirection.Credit &&
         BigInt(wallet.balance.toJSON().amount.replace(".", "")) +
           BigInt(money.toJSON().amount.replace(".", "")) >
           Money.MAX_MINOR_UNITS
@@ -136,7 +152,7 @@ export class TransactionUseCases {
         const entry =
           input.kind === "LOSS"
             ? undefined
-            : wallet[input.kind === "BET" ? "debit" : "credit"]({
+            : wallet[direction === LedgerDirection.Debit ? "debit" : "credit"]({
                 entryId: randomUUID(),
                 transactionId: transaction.id,
                 money,

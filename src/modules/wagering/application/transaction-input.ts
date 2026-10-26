@@ -22,7 +22,7 @@ export interface BetInput {
   money: { amount: string; currency: string };
 }
 export interface TransactionInput extends Omit<BetInput, "kind"> {
-  kind: "BET" | "WIN" | "LOSS" | "REFUND";
+  kind: "BET" | "WIN" | "LOSS" | "REFUND" | "ROLLBACK";
   referenceExternalTransactionId?: string;
 }
 export function invalidTransaction(): never {
@@ -74,7 +74,9 @@ export function validateTransaction(
     if (typeof input[field] !== "string" || !input[field].trim())
       invalidTransaction();
   if (
-    !["BET", "WIN", "LOSS", "REFUND"].includes(String(input.kind)) ||
+    !["BET", "WIN", "LOSS", "REFUND", "ROLLBACK"].includes(
+      String(input.kind),
+    ) ||
     !isUuid(String(input.walletId)) ||
     !isRecord(input.money)
   )
@@ -97,7 +99,8 @@ export function validateTransaction(
   }
   if (input.kind !== "LOSS" && !money.isPositive()) invalidTransaction();
   const hasReference = Object.hasOwn(input, "referenceExternalTransactionId");
-  if (input.kind === "REFUND" && !hasReference) invalidTransaction();
+  if (["REFUND", "ROLLBACK"].includes(String(input.kind)) && !hasReference)
+    invalidTransaction();
   if (
     hasReference &&
     (input.kind === "BET" ||
