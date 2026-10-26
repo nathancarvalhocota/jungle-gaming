@@ -1,77 +1,136 @@
-# Distributed Wagering Processor
+# jungle-gaming
 
-Serviço financeiro de apostas com precisão monetária, idempotência persistente, ledger auditável e recuperação após falhas.
+Serviço HTTP de processamento financeiro de apostas, construído para o desafio técnico. **Esta é uma entrega parcial**: o núcleo de Wallet, operações financeiras, idempotência persistente, ledger e reconciliação está implementado. Ainda faltam o consumidor SQS, a publicação da outbox e os workers necessários para concluir o fluxo de mensageria; por isso, o desafio não está integralmente concluído.
 
-## Estado atual
+## Escopo entregue
 
-Bootstrap técnico executável: NestJS sob Bun, conexão MikroORM/PostgreSQL e `GET /health/live`. A suíte de compatibilidade usa PostgreSQL real em container e um banco descartável por execução para verificar migrations, commit, rollback, uma constraint e transporte decimal exato.
+Wallet pode ser aberta com saldo zero ou positivo; abertura positiva é auditada. A API processa BET, WIN, LOSS, REFUND e ROLLBACK. O processamento usa valores monetários exatos, idempotência persistente e lock por Wallet no PostgreSQL. Transação, saldo, ledger e intenção de outbox são gravados atomicamente. Há consultas de Wallet e transação, ledger paginado e reconciliação em um snapshot SQL. A suíte também contém provas de concorrência com três processos reais.
 
-A entrada HTTP usa `NoAuthGuard` sem verificar credenciais nem criar identidade; health permanece público mesmo na substituição desse provider. `POST /wallets` cria uma carteira em BRL com saldo entre `0.00` e `1000000.00`, e `GET /wallets/:walletId` recupera seu estado do PostgreSQL. A abertura positiva confirma atomicamente Wallet na versão 1, transação interna `OPENING`, um crédito no ledger e dois eventos versionados na outbox. Abertura zero cria somente a Wallet. BET positiva pode ser submetida em `POST /wagering/transactions` com `Idempotency-Key`: débito ou rejeição auditável, idempotência global e lock por carteira são persistidos no PostgreSQL. Consultas por ID interno e identidade externa recuperam o resultado original. Publicação de eventos, autenticação real, readiness e workers permanecem pendentes.
+FAILED é reservado, sem caminho operacional implementado. Veja abaixo as limitações que impedem tratar o desafio como concluído.
 
-O enunciado original está em [challenge.md](docs/challenge.md).
+## Tecnologias validadas
 
-WIN positiva e LOSS entre zero e o teto também usam a mesma API. WIN credita com ledger; LOSS registra o resultado sem alterar saldo, versão ou ledger. Ambas aceitam referência opcional a uma BET processada no mesmo contexto. Referência ainda ausente ou pendente produz `PENDING_REFERENCE` e HTTP 202, inclusive no replay, sem movimentação. Essa pendência é persistida com uma intenção de evento; seu reprocessamento por worker ainda não existe. As regras completas e os códigos de rejeição estão em [arquitetura](docs/architecture.md#win-loss-e-referências-opcionais).
+Versões efetivamente usadas ou disponíveis no ambiente de validação documentado:
 
-REFUND positiva exige referência externa e devolve integralmente uma BET processada do mesmo contexto. Valor divergente, referência inelegível e compensação já aplicada geram rejeição auditável; apenas uma compensação direta por referência é permitida entre REFUND e ROLLBACK. Crédito, ledger e dois eventos são atômicos. As políticas e os limites estão em [arquitetura](docs/architecture.md#refund-integral).
-
-ROLLBACK positiva exige referência a BET, WIN ou REFUND processada do mesmo contexto e valor integral. Reverte BET com crédito e WIN/REFUND com débito; débito sem saldo é rejeitado com `REVERSAL_INSUFFICIENT_FUNDS`. Compensar uma REFUND não reabre a BET original. Referências ausentes ou ainda pendentes conservam HTTP 202 e snapshot sem movimentação. As garantias e limitações estão em [arquitetura](docs/architecture.md#rollback-integral) e [testes](docs/testing.md#rollback-integral-persistente).
-
-`GET /wallets/:walletId/ledger?limit=50&cursor=...` consulta o histórico em ordem `created_at DESC, id DESC`. Retorna `{ items, nextCursor }`, com identificadores, direção, dinheiro exato em strings, saldos anterior/posterior e data. O limite padrão é 50, entre 1 e 100; o cursor opaco é vinculado à Wallet. Não há snapshot entre requisições: movimentos mais recentes exigem reiniciar a consulta. Contrato, erros e limites estão em [arquitetura](docs/architecture.md#ledger-paginado).
-
-## Stack exigida
-
-- Bun 1.x como runtime, gerenciador de pacotes e executor de testes.
-- TypeScript estrito e NestJS.
-- PostgreSQL, migrations versionadas e reversíveis.
-- SQS em LocalStack ou MiniStack, com Docker Compose.
-- MikroORM, preferencial no desafio, ou TypeORM.
-
-Tecnologias, versões de referência e compatibilidade estão em [Stack](docs/stack.md). As decisões e seus motivos ficam em [Arquitetura](docs/architecture.md).
-
-MiniStack 1.5.32 já está no Compose. A suíte atual não exercita SQS, FIFO ou DLQ.
-
-## Documentação
-
-| Documento | Conteúdo |
+| Tecnologia | Versão |
 | --- | --- |
-| [Enunciado](docs/challenge.md) | Desafio original, preservado sem alterações |
-| [Stack](docs/stack.md) | Tecnologias, responsabilidades e compatibilidade |
-| [Arquitetura](docs/architecture.md) | Decisões aceitas, propostas e limitações |
-| [Estrutura](docs/structure.md) | Arquivos atuais, localização de código e organização proposta |
-| [Convenções](docs/conventions.md) | Idioma, nomenclatura e regras de código |
-| [Testes](docs/testing.md) | Estratégia e evidências necessárias |
-| [AGENTS](AGENTS.md) | Acordo de trabalho e orientações para agentes |
+| Bun | 1.4.4 |
+| TypeScript | 7.0.2 |
+| NestJS | 12.2.0 |
+| MikroORM / integração NestJS | 7.2.5 / 7.1.0 |
+| PostgreSQL | 18.6 |
+| Docker Engine / Compose | 29.9.2 / 5.6.1 |
+| MiniStack no Compose | 1.5.32 |
 
-## Execução e validação
+Os guias de stack e arquitetura detalham compatibilidade e decisões. A suíte não exercita SQS.
 
-Pré-requisitos: Bun 1.4.4 e Docker com Compose funcionando. No PowerShell, na raiz do repositório:
+## Executar localmente
+
+Pré-requisitos: Bun 1.4.4, Docker com Compose e permissão local para criar e remover bancos descartáveis de teste. Na raiz do repositório, no PowerShell:
 
 ```powershell
 bun install --frozen-lockfile
-# Copy only if your local configuration does not exist yet.
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d --wait postgres
-bun run typecheck
-bun run lint
-bun run test:stack
 bun run db:migrate
 bun run start
 ```
 
-A API escuta em `http://127.0.0.1:3000`. Em outro terminal, `Invoke-RestMethod http://127.0.0.1:3000/health/live` retorna `{"status":"ok"}`. Use Ctrl+C para encerrar. `bun run dev` executa com observação de alterações; `bun run format` aplica formatação e correções seguras de lint.
+A configuração local está em `.env.example`; revise `DATABASE_URL` em `.env` antes de aplicar migrations. O padrão aponta para `jungle_gaming` em localhost. `bun run db:migrate` altera o banco configurado; não o execute contra um banco com dados que devam ser preservados. `bun run db:migrate:down` reverte a migration mais recente no banco configurado e exige a mesma conferência do destino.
 
-`bun run db:migrate` aplica as migrations no banco configurado em `DATABASE_URL`; confira esse destino antes de executar. `bun run test` executa a suíte completa; `bun run test:stack` seleciona apenas o ensaio de compatibilidade. Os testes aplicam, revertem e reaplicam migrations em bancos descartáveis. O teste financeiro exercita também a CLI de migrations, com URL explícita e verificação do nome esperado antes de alterar o schema.
+A API escuta em `http://127.0.0.1:3000`. `bun run dev` inicia o modo de observação. O serviço PostgreSQL é o único necessário para os exemplos abaixo; MiniStack pode ser iniciado separadamente com `docker compose up -d ministack`, mas nenhuma integração SQS está implementada.
 
-Para testar no Postman, envie `POST http://127.0.0.1:3000/wallets` com corpo JSON `{"playerId":"player-demo","initialBalance":{"amount":"25.37","currency":"BRL"}}`. A resposta 201 inclui o `id`; consulte-o em `GET /wallets/:walletId`. Jogador/moeda duplicado retorna 409. Valores monetários são strings com exatamente duas casas decimais.
+Verificações:
 
-O PostgreSQL é publicado apenas em `127.0.0.1:5432`, com credenciais locais descartáveis em `.env.example` e `compose.yaml`. O usuário local precisa de permissão para criar/remover bancos. `bun run test` conecta a administração em `/postgres` e inicia o executor com URL explícita para `suite_validation_<uuid>`; as suítes financeiras e técnicas criam ainda `wallet_validation_<uuid>`, `bet_validation_<uuid>` e `stack_validation_<uuid>`. Os alvos são conferidos por `current_database()` e prefixo antes das migrations e da limpeza. O banco de desenvolvimento não recebe conexões desses comandos de teste. Para a suíte completa, use esse runner; executar diretamente testes HTTP pode usar a URL herdada. Essa configuração não define as permissões do futuro papel da aplicação financeira.
+```powershell
+bun run typecheck
+bun run lint
+bun run test
+```
 
-O serviço PostgreSQL permanece disponível após os testes. Para pará-lo, use `docker compose stop postgres`, preservando seu volume e o MiniStack. Para iniciar o emulador, use `docker compose up -d ministack`.
+Use `bun run test` para a suíte completa. O runner administra bancos descartáveis com prefixos conferidos; não execute os arquivos de teste HTTP diretamente com a URL herdada. Os testes não removem volumes Docker nem corrigem o banco de desenvolvimento.
 
-Evidências dos testes e limites estão em [docs/testing.md](docs/testing.md).
+## Endpoints
 
-## Processo de construção
+| Método e rota | Uso |
+| --- | --- |
+| `GET /health/live` | Liveness, sem readiness de dependências |
+| `POST /wallets`, `GET /wallets/:walletId` | Criar e consultar Wallet |
+| `POST /wagering/transactions` | Submeter BET, WIN, LOSS, REFUND ou ROLLBACK com `Idempotency-Key` |
+| `GET /wagering/transactions/:transactionId` | Consultar transação pelo ID interno |
+| `GET /providers/:providerId/wagering/transactions/:externalTransactionId` | Consultar pela identidade externa |
+| `GET /wallets/:walletId/ledger?limit=50&cursor=...` | Consultar ledger com cursor |
+| `POST /wallets/:walletId/reconciliation` | Comparar saldo armazenado e saldo reconstruído |
+| `GET /metrics` | Contadores locais de reconciliação em formato Prometheus |
 
-O candidato participa das decisões e da revisão dos cenários; a IA auxilia na implementação e documentação. Cada etapa registra comportamento entregue, testes executados e limitações conhecidas.
+Dinheiro usa strings decimais com duas casas e BRL. POST de operação retorna 201 quando processada, 200 no replay idempotente, 202 para referência pendente e 422 para rejeição financeira. Uma chave de idempotência com payload diferente retorna 409. A autenticação real está fora do escopo por decisão aceita; a extensão `NoAuthGuard` não autentica o chamador.
 
-Prioridade: correção financeira, concorrência, idempotência e recuperação. Funcionalidades opcionais entram depois dos requisitos obrigatórios.
+## Demonstração rápida
+
+Com a API em execução, este exemplo PowerShell cria uma Wallet de BRL 25,37, envia uma BET de BRL 10, repete a mesma requisição, provoca conflito de payload, devolve a BET por REFUND, consulta o ledger e reconcilia a Wallet:
+
+```powershell
+$base = "http://127.0.0.1:3000"
+$walletBody = @{ playerId = "player-demo"; initialBalance = @{ amount = "25.37"; currency = "BRL" } } | ConvertTo-Json -Compress
+$wallet = Invoke-RestMethod -Method Post -Uri "$base/wallets" -ContentType "application/json" -Body $walletBody
+
+$betBody = @{
+  providerId = "provider-demo"; externalTransactionId = "bet-demo"
+  playerId = "player-demo"; walletId = $wallet.id
+  roundId = "round-demo"; gameId = "game-demo"; kind = "BET"
+  money = @{ amount = "10.00"; currency = "BRL" }
+} | ConvertTo-Json -Compress
+$headers = @{ "Idempotency-Key" = "demo-bet-key" }
+$bet = Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $betBody
+$replay = Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $betBody
+$replay.idempotentReplay
+
+$changedBet = @{
+  providerId = "provider-demo"; externalTransactionId = "bet-demo"
+  playerId = "player-demo"; walletId = $wallet.id
+  roundId = "round-demo"; gameId = "game-demo"; kind = "BET"
+  money = @{ amount = "11.00"; currency = "BRL" }
+} | ConvertTo-Json -Compress
+try {
+  Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $headers -ContentType "application/json" -Body $changedBet
+} catch {
+  [int]$_.Exception.Response.StatusCode
+}
+
+$refundBody = @{
+  providerId = "provider-demo"; externalTransactionId = "refund-demo"
+  playerId = "player-demo"; walletId = $wallet.id
+  roundId = "round-demo"; gameId = "game-demo"; kind = "REFUND"
+  referenceExternalTransactionId = "bet-demo"
+  money = @{ amount = "10.00"; currency = "BRL" }
+} | ConvertTo-Json -Compress
+$refundHeaders = @{ "Idempotency-Key" = "demo-refund-key" }
+Invoke-RestMethod -Method Post -Uri "$base/wagering/transactions" -Headers $refundHeaders -ContentType "application/json" -Body $refundBody
+Invoke-RestMethod -Method Get -Uri "$base/wallets/$($wallet.id)/ledger"
+Invoke-RestMethod -Method Post -Uri "$base/wallets/$($wallet.id)/reconciliation"
+```
+
+O resultado de replay deve indicar `idempotentReplay = true`; o conflito é HTTP 409. Cada execução cria registros novos, então use um `playerId` distinto ao repetir o exemplo.
+
+## Limitações conhecidas
+
+- Não há consumidor SQS nem inbox.
+- A outbox persiste eventos, mas não há publicador; persistir intenção não significa que o evento foi publicado.
+- Não há worker para resolver ou expirar `PENDING_REFERENCE`.
+- Retry, DLQ, shutdown de mensagens e recuperação após crash não foram demonstrados.
+- `FAILED` permanece reservado, sem caminho operacional implementado.
+- Não há readiness PostgreSQL/SQS nem observabilidade operacional completa. As métricas de reconciliação são locais ao processo.
+- `NoAuthGuard` é uma extensão sem autenticação real, mantida fora do escopo por decisão aceita.
+- Os testes usam PostgreSQL real e comprovam concorrência com três processos; não demonstram processamento SQS.
+- Não há promessa de desempenho, capacidade de produção ou conclusão integral do desafio.
+
+## Documentação
+
+- [Enunciado original](docs/challenge.md)
+- [Arquitetura e decisões](docs/architecture.md)
+- [Stack e compatibilidade](docs/stack.md)
+- [Estrutura do código](docs/structure.md)
+- [Convenções](docs/conventions.md)
+- [Estratégia, evidências e limites dos testes](docs/testing.md)
+- [Spec do fluxo financeiro persistente](docs/specs/fluxo-financeiro-persistente.md)
+- [Acordo de trabalho](AGENTS.md)
